@@ -5,11 +5,11 @@ Diese Datei schreibt die GitHub Action bei jedem Bau neu (auch damit GitHub den 
 | | |
 |---|---|
 | Datenstand (OpenStreetMap) | 2026-11-17T21:24:30Z |
-| gebaut | 2026-11-18T21:21:33Z |
+| gebaut | 2026-11-18T21:34:05Z |
 | Größe der Seite | 259 MB in 6440 Dateien |
 | Kacheln z15 / Groß-Ebene z12 / Routen z12 | 6125 / 156 / 156 |
-| Bauzeit | 6 min |
-| Action-Lauf | https://github.com/Jade-HS-Vibecoding-WPK/niedersachsen-cache/actions/runs/44399223095 |
+| Bauzeit | 5 min |
+| Action-Lauf | https://github.com/Jade-HS-Vibecoding-WPK/niedersachsen-cache/actions/runs/44401416496 |
 
 | Stadt | Fläche Stadt | mit 3-km-Rand | Kacheln |
 |---|---:|---:|---:|
