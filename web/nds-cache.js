@@ -14,7 +14,7 @@
  *   </script>
  *
  * NdsCache.abgedeckt([west, süd, ost, nord])  -> Promise<true|false>
- * NdsCache.elemente([west, süd, ost, nord])   -> Promise<{elements:[…]} | null>
+ * NdsCache.elemente([west, süd, ost, nord])   -> Promise<{elements:[…]} | null>  (Option {ohneRouten:true})
  * NdsCache.overpass('[out:json];…;out geom;')  -> Promise<Overpass-Antwort | null>
  * NdsCache.stand, NdsCache.quellenangabe, NdsCache.geladeneBytes
  *
@@ -321,7 +321,8 @@
     }).catch(function (e) { merkeGrund(e); return false; });
   };
 
-  NdsCache.elemente = function (bbox) {
+  // optionen.ohneRouten = true: Bus-/Bahn-/Radrouten (Relationen type=route) weglassen, spart viel Download
+  NdsCache.elemente = function (bbox, optionen) {
     return Promise.resolve().then(function () {
       var b = alsBbox(bbox);
       return manifestLaden().then(function () {
@@ -329,7 +330,7 @@
         var k = gebietKacheln(g);
         if (!k) nein('Gebiet nicht (ganz) im Cache');
         if (k.length > NdsCache.maxKacheln) nein('Gebiet zu groß (' + k.length + ' Kacheln)');
-        return ladenUndMischen(urlsFuer(k, true)).then(function (alle) {
+        return ladenUndMischen(urlsFuer(k, !(optionen && optionen.ohneRouten))).then(function (alle) {
           return { elements: sortieren(alle.filter(function (el) { return trifft(el, g); }).map(kopie)) };
         });
       });

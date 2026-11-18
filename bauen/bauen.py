@@ -619,6 +619,8 @@ def main():
                 "Wege haben kein Feld 'nodes'.",
                 "Mitglieder von Relationen, die außerhalb des Niedersachsen-Auszugs liegen, haben keine Geometrie.",
                 "Merkmale aus der Streichliste fehlen.",
+                "Routen-Ebene (osm-routen): Geometrie der Mitglieds-Wege steht je Datei nur einmal im Feld 'wege' "
+                "(siehe routen.hinweis).",
                 "Ein Objekt steht in jeder Kachel, die es berührt; über mehrere Kacheln doppelte Objekte (type+id) "
                 "muss der Leser entfernen (nds-cache.js macht das).",
             ],

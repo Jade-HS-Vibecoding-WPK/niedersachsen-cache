@@ -70,7 +70,7 @@ Weitere Befehle:
 | Befehl | Ergebnis |
 |---|---|
 | `NdsCache.overpass(abfrage)` | Overpass-Antwort oder `null` |
-| `NdsCache.elemente([west, süd, ost, nord])` | **alle** Objekte im Rechteck als `{elements: [...]}` oder `null` |
+| `NdsCache.elemente([west, süd, ost, nord])` | **alle** Objekte im Rechteck als `{elements: [...]}` oder `null`. Mit `{ohneRouten: true}` als zweitem Wert ohne Bus-/Bahn-/Radrouten (lädt viel weniger) |
 | `NdsCache.abgedeckt([west, süd, ost, nord])` | `true`, wenn das Rechteck ganz im Cache liegt |
 | `NdsCache.stand` | Datenstand, z. B. `2026-11-17T21:24:30Z` |
 | `NdsCache.quellenangabe` | `© OpenStreetMap-Mitwirkende, ODbL` |

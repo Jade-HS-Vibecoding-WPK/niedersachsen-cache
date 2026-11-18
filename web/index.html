@@ -190,9 +190,10 @@
     });
     kartenBereit.then(function () {
       karte.addSource('abdeckung', { type: 'geojson', data: { type: 'FeatureCollection', features: kacheln } });
-      karte.addLayer({ id: 'abdeckung', type: 'fill', source: 'abdeckung', paint: { 'fill-color': '#2f6fb0', 'fill-opacity': 0.10 } }, karte.getStyle().layers[1] && karte.getStyle().layers[1].id);
+      var darunter = karte.getLayer('erg-fl') ? 'erg-fl' : undefined;   // Ergebnisse bleiben oben
+      karte.addLayer({ id: 'abdeckung', type: 'fill', source: 'abdeckung', paint: { 'fill-color': '#2f6fb0', 'fill-opacity': 0.08, 'fill-antialias': false } }, darunter);
       karte.addSource('grenzen', { type: 'geojson', data: { type: 'FeatureCollection', features: grenzen } });
-      karte.addLayer({ id: 'grenzen', type: 'line', source: 'grenzen', paint: { 'line-color': '#2f6fb0', 'line-width': 1.5, 'line-dasharray': [3, 2] } });
+      karte.addLayer({ id: 'grenzen', type: 'line', source: 'grenzen', paint: { 'line-color': '#2f6fb0', 'line-width': 1.5, 'line-dasharray': [3, 2] } }, darunter);
     });
   });
 </script>
