@@ -165,7 +165,7 @@ außer dieser **Streichliste**: fremdsprachige Namen `name:xx` (außer `name:de`
    Der **AGS** (amtlicher Gemeindeschlüssel, 8 Ziffern) steht z. B. bei Wikipedia im Kasten rechts.
    Optional `"zusatz": "…"` für einen Hinweis.
 2. Änderung auf `main` hochladen (Commit + Push oder direkt auf GitHub bearbeiten).
-3. Unter **Actions → Cache bauen → Run workflow** den Bau starten (dauert ca. 15–20 Minuten).
+3. Unter **Actions → Cache bauen → Run workflow** den Bau starten (dauert ca. 10 Minuten).
 4. Die Action bricht ab, wenn die Seite größer als 900 MB würde. Dann zuerst den Rand verkleinern
    (`puffer_m` in `staedte.json`), nicht Merkmale weglassen.
 
