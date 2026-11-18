@@ -1,0 +1,18 @@
+{
+  "_hinweis": "Liste der Städte im Cache. Eine Stadt hinzufügen: neuen Eintrag mit Name und amtlichem Gemeindeschlüssel (AGS, 8 Ziffern) anlegen. Die Stadtgrenze wird über den AGS in den OSM-Daten gesucht (Grenz-Relation mit boundary=administrative und de:amtlicher_gemeindeschluessel). puffer_m = Randgebiet um die Stadtgrenze in Metern.",
+  "puffer_m": 3000,
+  "staedte": [
+    {"id": "hannover",      "name": "Hannover",         "ags": "03241001", "einwohner_ca": 522803},
+    {"id": "braunschweig",  "name": "Braunschweig",     "ags": "03101000", "einwohner_ca": 252811},
+    {"id": "oldenburg",     "name": "Oldenburg (Oldb)", "ags": "03403000", "einwohner_ca": 177055},
+    {"id": "osnabrueck",    "name": "Osnabrück",        "ags": "03404000", "einwohner_ca": 166257},
+    {"id": "wolfsburg",     "name": "Wolfsburg",        "ags": "03103000", "einwohner_ca": 129813},
+    {"id": "goettingen",    "name": "Göttingen",        "ags": "03159016", "einwohner_ca": 130521},
+    {"id": "salzgitter",    "name": "Salzgitter",       "ags": "03102000", "einwohner_ca": 104433},
+    {"id": "hildesheim",    "name": "Hildesheim",       "ags": "03254021", "einwohner_ca": 98207,
+     "zusatz": "Grenzfall: liegt knapp an der 100.000-Grenze (zuletzt knapp darunter), wird als Großstadt mitgeführt"},
+    {"id": "wilhelmshaven", "name": "Wilhelmshaven",    "ags": "03405000", "einwohner_ca": 75324,
+     "zusatz": "Zusatz: Hochschulstandort (Jade Hochschule), keine Großstadt"}
+  ],
+  "_quelle_einwohner": "Landesamt für Statistik Niedersachsen (Bevölkerungsfortschreibung), übernommen aus Wikipedia 'Liste der größten Städte in Niedersachsen' (Stand laut Artikel 31.12.2025). Nur zur Information, nicht für den Bau nötig."
+}

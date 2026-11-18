@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Niedersachsen-Cache</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="nds-cache.js"></script>
+<style>
+  :root { --bg: #f5f5f2; --panel: #ffffff; --text: #1d1d1f; --muted: #66666c; --line: #ddddd7; --akzent: #2f6fb0; --code: #f0f0ec; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #121215; --panel: #1b1b20; --text: #ececf0; --muted: #9c9ca5; --line: #2e2e35; --akzent: #6fa8e8; --code: #24242b; }
+  }
+  :root[data-theme="dark"] { --bg: #121215; --panel: #1b1b20; --text: #ececf0; --muted: #9c9ca5; --line: #2e2e35; --akzent: #6fa8e8; --code: #24242b; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; font: 14px/1.5 system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); display: flex; }
+  aside { width: 430px; max-width: 100%; overflow: auto; padding: 16px; background: var(--panel); border-right: 1px solid var(--line); }
+  #karte { flex: 1; min-height: 320px; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  h2 { font-size: 15px; margin: 18px 0 6px; }
+  p { margin: 6px 0; }
+  .klein { color: var(--muted); font-size: 12px; }
+  code, textarea, pre { font: 12px/1.4 ui-monospace, Consolas, monospace; }
+  pre { background: var(--code); padding: 8px; border-radius: 6px; overflow: auto; white-space: pre; }
+  textarea { width: 100%; height: 110px; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--code); color: var(--text); }
+  select, button { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); }
+  button { cursor: pointer; margin: 6px 6px 0 0; }
+  button.haupt { background: var(--akzent); border-color: var(--akzent); color: #fff; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  td, th { padding: 3px 4px; border-bottom: 1px solid var(--line); text-align: right; }
+  td:first-child, th:first-child { text-align: left; }
+  #ergebnis { margin-top: 8px; padding: 8px; border-radius: 6px; background: var(--code); min-height: 2.5em; }
+  a { color: var(--akzent); }
+  @media (max-width: 760px) { body { flex-direction: column; } aside { width: 100%; height: 55vh; border-right: 0; border-bottom: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Niedersachsen-Cache</h1>
+  <p>OpenStreetMap-Daten der Großstädte Niedersachsens und Wilhelmshavens, fertig vorbereitet auf GitHub Pages.
+     Apps holen ihre Daten hier in unter einer Sekunde, statt bei Overpass 30–60 Sekunden in der Warteschlange zu warten.</p>
+  <p class="klein" id="stand">Lade Übersicht …</p>
+
+  <h2>Ausprobieren</h2>
+  <p>
+    <select id="gebiet">
+      <option value="8.1030,53.5185,8.1181,53.5275">Wilhelmshaven-Zentrum (ca. 1 km²)</option>
+      <option value="8.2065,53.1360,8.2215,53.1450">Oldenburg-Innenstadt (ca. 1 km²)</option>
+      <option value="9.7320,52.3700,9.7470,52.3790">Hannover-Mitte (ca. 1 km²)</option>
+      <option value="karte">Kartenausschnitt</option>
+    </select>
+    <select id="vorlage">
+      <option value="gebaeude">Gebäude (out geom)</option>
+      <option value="strassen">Straßen und Wege</option>
+      <option value="laeden">Läden und Gastronomie (Punkte)</option>
+      <option value="gruen">Grün- und Wasserflächen</option>
+      <option value="bus">Buslinien (Relationen)</option>
+    </select>
+  </p>
+  <textarea id="abfrage" spellcheck="false"></textarea>
+  <button class="haupt" id="los">Aus dem Cache laden</button>
+  <button id="alles" title="NdsCache.elemente(bbox): alle Objekte im Gebiet">Alle Objekte im Gebiet</button>
+  <div id="ergebnis" class="klein">Noch nichts geladen.</div>
+
+  <h2>Städte im Cache</h2>
+  <table id="staedte"><thead><tr><th>Stadt</th><th>Stadt km²</th><th>mit Rand km²</th><th>Kacheln</th></tr></thead><tbody></tbody></table>
+  <p class="klein">Blau: abgedeckte Fläche (Stadtgrenze + ca. 3 km Rand, auf Kacheln von ca. 0,75 km gerundet).</p>
+
+  <h2>In deiner App benutzen</h2>
+<pre>&lt;script src="https://jade-hs-vibecoding-wpk.github.io/niedersachsen-cache/nds-cache.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  async function ladeOsm(abfrage) {
+    const daten = await NdsCache.overpass(abfrage);
+    if (daten) return daten;          // aus dem Cache
+    return ladeLive(abfrage);         // sonst wie bisher
+  }
+&lt;/script&gt;</pre>
+  <p class="klein">Anleitung, Grenzen und Lizenz: <a href="https://github.com/Jade-HS-Vibecoding-WPK/niedersachsen-cache#readme">README auf GitHub</a>.
+     Daten: <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap-Mitwirkende, ODbL</a>.</p>
+</aside>
+<div id="karte"></div>
+<script>
+  var VORLAGEN = {
+    gebaeude: '[out:json][timeout:60];\n(way["building"]({b});relation["building"]({b}););\nout geom;',
+    strassen: '[out:json][timeout:60];\nway["highway"]({b});\nout geom;',
+    laeden: '[out:json][timeout:60];\n(node["shop"]({b});node["amenity"~"^(restaurant|cafe|bar|pub|fast_food)$"]({b}););\nout;',
+    gruen: '[out:json][timeout:60];\n(way["leisure"~"^(park|garden|playground)$"]({b});way["landuse"~"^(grass|forest|meadow|cemetery)$"]({b});way["natural"~"^(water|wood)$"]({b});relation["natural"="water"]({b}););\nout geom;',
+    bus: '[out:json][timeout:60];\nrelation["type"="route"]["route"="bus"]({b});\nout geom;'
+  };
+  var $ = function (id) { return document.getElementById(id); };
+  var karte = new maplibregl.Map({
+    container: 'karte',
+    style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+    center: [8.11, 53.523], zoom: 14
+  });
+  var kartenBereit = new Promise(function (ok) { karte.on('load', ok); });
+
+  function gebiet() {
+    var v = $('gebiet').value;
+    if (v === 'karte') { var b = karte.getBounds(); return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]; }
+    return v.split(',').map(Number);
+  }
+  function vorlageEinsetzen() {
+    var b = gebiet().map(function (z) { return z.toFixed(5); });
+    $('abfrage').value = VORLAGEN[$('vorlage').value].replace(/\{b\}/g, [b[1], b[0], b[3], b[2]].join(','));
+  }
+  function hinfliegen() {
+    if ($('gebiet').value === 'karte') return;
+    var b = gebiet();
+    karte.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 30, duration: 600 });
+  }
+  $('gebiet').onchange = function () { vorlageEinsetzen(); hinfliegen(); };
+  $('vorlage').onchange = vorlageEinsetzen;
+  vorlageEinsetzen();
+
+  // Overpass-Elemente -> GeoJSON (nur zum Zeichnen)
+  function alsGeoJson(elemente) {
+    var f = [];
+    function linie(geo) { return (geo || []).filter(Boolean).map(function (p) { return [p.lon, p.lat]; }); }
+    elemente.forEach(function (e) {
+      if (e.type === 'node' && e.lat != null) f.push({ type: 'Feature', properties: { art: 'punkt' }, geometry: { type: 'Point', coordinates: [e.lon, e.lat] } });
+      else if (e.type === 'way') {
+        var c = linie(e.geometry);
+        if (c.length < 2) return;
+        var zu = c.length > 3 && c[0][0] === c[c.length - 1][0] && c[0][1] === c[c.length - 1][1] && !(e.tags && e.tags.highway);
+        f.push({ type: 'Feature', properties: { art: zu ? 'flaeche' : 'linie' }, geometry: zu ? { type: 'Polygon', coordinates: [c] } : { type: 'LineString', coordinates: c } });
+      } else if (e.type === 'relation') {
+        (e.members || []).forEach(function (m) {
+          if (m.type === 'way' && m.geometry) f.push({ type: 'Feature', properties: { art: 'linie' }, geometry: { type: 'LineString', coordinates: linie(m.geometry) } });
+        });
+      }
+    });
+    return { type: 'FeatureCollection', features: f };
+  }
+  function zeichnen(elemente) {
+    kartenBereit.then(function () {
+      var gj = alsGeoJson(elemente);
+      if (karte.getSource('erg')) { karte.getSource('erg').setData(gj); return; }
+      karte.addSource('erg', { type: 'geojson', data: gj });
+      karte.addLayer({ id: 'erg-fl', type: 'fill', source: 'erg', filter: ['==', ['get', 'art'], 'flaeche'], paint: { 'fill-color': '#d2603a', 'fill-opacity': 0.35 } });
+      karte.addLayer({ id: 'erg-li', type: 'line', source: 'erg', filter: ['!=', ['get', 'art'], 'punkt'], paint: { 'line-color': '#b8462a', 'line-width': 1.2 } });
+      karte.addLayer({ id: 'erg-pu', type: 'circle', source: 'erg', filter: ['==', ['get', 'art'], 'punkt'], paint: { 'circle-radius': 3.5, 'circle-color': '#7a3fb8', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 } });
+    });
+  }
+  function zaehlen(els) {
+    var z = { node: 0, way: 0, relation: 0 };
+    els.forEach(function (e) { z[e.type] = (z[e.type] || 0) + 1; });
+    return els.length + ' Objekte (' + z.node + ' Knoten, ' + z.way + ' Wege, ' + z.relation + ' Relationen)';
+  }
+  function messen(name, versprechen) {
+    var t0 = performance.now(), b0 = NdsCache.geladeneBytes;
+    $('ergebnis').textContent = 'Lade …';
+    versprechen.then(function (js) {
+      var ms = Math.round(performance.now() - t0), kb = Math.round((NdsCache.geladeneBytes - b0) / 1024);
+      if (!js) { $('ergebnis').textContent = 'null – ' + NdsCache.letzterGrund + '. Eine App würde jetzt live bei Overpass laden.'; return; }
+      $('ergebnis').textContent = name + ': ' + zaehlen(js.elements) + ' in ' + ms + ' ms, ' + kb + ' KB übertragen' + (kb === 0 ? ' (schon im Speicher)' : '') + '.';
+      zeichnen(js.elements);
+    });
+  }
+  $('los').onclick = function () { messen('NdsCache.overpass', NdsCache.overpass($('abfrage').value)); };
+  $('alles').onclick = function () { messen('NdsCache.elemente', NdsCache.elemente(gebiet())); };
+
+  // Übersicht und Abdeckung
+  NdsCache.bereit().then(function (ok) {
+    if (!ok) { $('stand').textContent = 'Cache nicht erreichbar: ' + NdsCache.letzterGrund; return; }
+    var m = NdsCache.manifest;
+    $('stand').textContent = 'Datenstand: ' + new Date(m.datenstand).toLocaleString('de-DE') + ' · gebaut ' + new Date(m.erstellt).toLocaleDateString('de-DE') + ' · wird jede Woche neu gebaut';
+    var tb = document.querySelector('#staedte tbody'), kacheln = [], grenzen = [];
+    m.staedte.forEach(function (s) {
+      var tr = document.createElement('tr');
+      [s.name + (s.zusatz ? ' *' : ''), s.flaeche_stadt_km2, s.flaeche_mit_puffer_km2, s.anzahl_kacheln].forEach(function (w, i) {
+        var td = document.createElement('td'); td.textContent = typeof w === 'number' ? w.toLocaleString('de-DE') : w;
+        if (i === 0 && s.zusatz) td.title = s.zusatz;
+        tr.appendChild(td);
+      });
+      tr.style.cursor = 'pointer';
+      tr.onclick = function () { karte.fitBounds([[s.bbox[0], s.bbox[1]], [s.bbox[2], s.bbox[3]]], { padding: 20 }); };
+      tb.appendChild(tr);
+      var k = s.kacheln, bin = atob(k.bits), n = Math.pow(2, 15);
+      for (var i = 0; i < k.breite * k.hoehe; i++) {
+        if (!(bin.charCodeAt(i >> 3) & (1 << (i & 7)))) continue;
+        var x = k.x0 + i % k.breite, y = k.y0 + Math.floor(i / k.breite);
+        var w = x / n * 360 - 180, o = (x + 1) / n * 360 - 180;
+        var no = 180 / Math.PI * Math.atan(Math.sinh(Math.PI - 2 * Math.PI * y / n)), su = 180 / Math.PI * Math.atan(Math.sinh(Math.PI - 2 * Math.PI * (y + 1) / n));
+        kacheln.push({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[w, su], [o, su], [o, no], [w, no], [w, su]]] } });
+      }
+      grenzen.push({ type: 'Feature', properties: { name: s.name }, geometry: s.grenze });
+    });
+    kartenBereit.then(function () {
+      karte.addSource('abdeckung', { type: 'geojson', data: { type: 'FeatureCollection', features: kacheln } });
+      karte.addLayer({ id: 'abdeckung', type: 'fill', source: 'abdeckung', paint: { 'fill-color': '#2f6fb0', 'fill-opacity': 0.10 } }, karte.getStyle().layers[1] && karte.getStyle().layers[1].id);
+      karte.addSource('grenzen', { type: 'geojson', data: { type: 'FeatureCollection', features: grenzen } });
+      karte.addLayer({ id: 'grenzen', type: 'line', source: 'grenzen', paint: { 'line-color': '#2f6fb0', 'line-width': 1.5, 'line-dasharray': [3, 2] } });
+    });
+  });
+</script>
+</body>
+</html>

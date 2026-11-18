@@ -1,0 +1,7 @@
+# Bau-Ergebnisse und Rohdaten nicht einchecken (die Action baut sie jede Woche neu)
+site/
+roh/
+*.osm.pbf
+__pycache__/
+*.pyc
+.venv/
