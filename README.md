@@ -20,19 +20,22 @@ Deine App fragt zuerst hier. Liegt dort nichts, lädt sie wie bisher bei Overpas
 ## Welche Städte?
 
 Die Großstädte Niedersachsens (über 100.000 Einwohner) mit ihren **Randgebieten**:
-Stadtgrenze plus etwa **3 km** rundherum. Dörfer und das Land dazwischen sind nicht dabei.
+Stadtgrenze plus etwa **3 km** rundherum. Dazu zwei **Zusatz-Städte**: Wilhelmshaven und Delmenhorst.
+Dörfer und das Land dazwischen sind nicht dabei. Der Rand endet an der Grenze zu Nordrhein-Westfalen, Hessen,
+Thüringen und Sachsen-Anhalt (dafür fehlen die Daten); Bremen ist dagegen dabei.
 
 | Stadt | Fläche der Stadt | mit 3-km-Rand | Hinweis |
 |---|---:|---:|---|
 | Hannover | 204 km² | 451 km² | |
 | Braunschweig | 193 km² | 418 km² | |
 | Oldenburg (Oldb) | 103 km² | 264 km² | |
-| Osnabrück | 120 km² | 310 km² | |
-| Wolfsburg | 205 km² | 434 km² | |
+| Osnabrück | 120 km² | 310 km² | Rand an der Grenze zu NRW abgeschnitten (im Südwesten fehlen ca. 47 km² Rand). |
+| Wolfsburg | 205 km² | 434 km² | Am Rand zu Sachsen-Anhalt fehlen 2 Kacheln. |
 | Göttingen | 117 km² | 300 km² | |
 | Salzgitter | 224 km² | 515 km² | |
 | Hildesheim | 92 km² | 256 km² | **Grenzfall:** Hildesheim liegt knapp an der 100.000-Grenze (zuletzt knapp darunter) und ist trotzdem dabei. |
 | Wilhelmshaven | 107 km² | 271 km² | **Zusatz: Hochschulstandort** der Jade Hochschule (keine Großstadt). |
+| Delmenhorst | 62 km² | 206 km² | **Zusatz:** keine Großstadt (rund 80.000 Einwohner), aufgenommen wegen der Nähe zu Bremen und Oldenburg. Der Rand reicht bis nach Bremen hinein. |
 
 - **Datenstand:** steht auf der [Testseite](https://jade-hs-vibecoding-wpk.github.io/niedersachsen-cache/), in
   [`STAND.md`](STAND.md) und in [`daten/manifest.json`](https://jade-hs-vibecoding-wpk.github.io/niedersachsen-cache/daten/manifest.json).
@@ -129,7 +132,7 @@ außer dieser **Streichliste**: fremdsprachige Namen `name:xx` (außer `name:de`
 
 **Grenzen:**
 
-- **Nur diese Städte** mit ihrem Rand. Alles andere (andere Orte, Bremen, ganz Deutschland) lädt deine App live.
+- **Nur diese Städte** mit ihrem Rand. Alles andere (andere Orte, Bremen-Stadt, ganz Deutschland) lädt deine App live.
   Liegt dein Gebiet nur zum Teil im Cache, kommt `null` → live.
 - Was **nicht** in der Liste oben steht (z. B. `power`, `barrier`, `historic` ohne eins der Merkmale oben,
   reine Adresspunkte), fehlt im Cache. Fragt deine App danach, findet sie im Cache nichts.
@@ -171,7 +174,8 @@ Selbst bauen auf dem eigenen Rechner (Python 3.12):
 ```
 pip install -r bauen/requirements.txt
 curl -LO https://download.geofabrik.de/europe/germany/niedersachsen-latest.osm.pbf
-python bauen/bauen.py --pbf niedersachsen-latest.osm.pbf --ausgabe site
+curl -LO https://download.geofabrik.de/europe/germany/niedersachsen.poly
+python bauen/bauen.py --pbf niedersachsen-latest.osm.pbf --auszug-poly niedersachsen.poly --ausgabe site
 copy web\* site\        (Windows)   bzw.   cp web/* site/   (Mac/Linux)
 node pruefen/selbsttest.js site
 ```

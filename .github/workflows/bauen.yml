@@ -49,10 +49,11 @@ jobs:
           G=https://download.geofabrik.de/europe/germany
           curl -fsSL --retry 5 --retry-delay 30 -o roh/niedersachsen-latest.osm.pbf     $G/niedersachsen-latest.osm.pbf
           curl -fsSL --retry 5 --retry-delay 30 -o roh/niedersachsen-latest.osm.pbf.md5 $G/niedersachsen-latest.osm.pbf.md5
+          curl -fsSL --retry 5 --retry-delay 30 -o roh/niedersachsen.poly                $G/niedersachsen.poly
           cd roh && md5sum -c niedersachsen-latest.osm.pbf.md5 && ls -l
 
       - name: Kacheln bauen
-        run: python bauen/bauen.py --pbf roh/niedersachsen-latest.osm.pbf --ausgabe site
+        run: python bauen/bauen.py --pbf roh/niedersachsen-latest.osm.pbf --auszug-poly roh/niedersachsen.poly --ausgabe site
 
       - name: Seite zusammenstellen
         run: cp web/index.html web/nds-cache.js site/

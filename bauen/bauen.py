@@ -33,7 +33,7 @@ from collections import Counter, defaultdict
 import numpy
 import osmium
 from pyproj import Transformer
-from shapely.geometry import LineString, MultiPolygon, box, mapping
+from shapely.geometry import LineString, MultiPolygon, Polygon, box, mapping
 from shapely.ops import linemerge, polygonize, unary_union
 import shapely
 from shapely.prepared import prep
@@ -208,6 +208,25 @@ def flaeche_aus_wegen(aussen, innen):
     return g
 
 
+def poly_lesen(pfad):
+    """Geofabrik-*.poly lesen (Abschnitte mit Koordinaten, '!' = Loch). Ergibt eine shapely-Fläche."""
+    aussen, loecher, cur, loch = [], [], None, False
+    zeilen = [z.strip() for z in open(pfad, encoding="utf-8") if z.strip()]
+    for z in zeilen[1:]:
+        if z == "END":
+            if cur is not None:
+                (loecher if loch else aussen).append(Polygon(cur))
+                cur = None
+            continue
+        if cur is None:
+            loch, cur = z.startswith("!"), []
+            continue
+        x, y = z.split()[:2]
+        cur.append((float(x), float(y)))
+    g = unary_union(aussen)
+    return g.difference(unary_union(loecher)) if loecher else g
+
+
 def bitmaske(kacheln):
     xs = [k[0] for k in kacheln]
     ys = [k[1] for k in kacheln]
@@ -230,6 +249,9 @@ def main():
     ap.add_argument("--puffer", type=float, default=None, help="Randgebiet in m (Standard: aus staedte.json)")
     ap.add_argument("--gross-schwelle", type=int, default=2,
                     help="Objekte, deren Umriss mehr als N x N z15-Kacheln überspannt, kommen in die Groß-Ebene")
+    ap.add_argument("--auszug-poly", default="",
+                    help="Umriss des Auszugs (Geofabrik *.poly). Kacheln, die nicht ganz darin liegen, gelten als nicht "
+                         "abgedeckt, weil dort Daten jenseits der Landesgrenze fehlen.")
     ap.add_argument("--quelle-url", default="https://download.geofabrik.de/europe/germany/niedersachsen-latest.osm.pbf")
     args = ap.parse_args()
 
@@ -306,6 +328,9 @@ def main():
         return shapely.transform(g, lambda c: numpy.column_stack(_wgs.transform(c[:, 0], c[:, 1])))
     abgedeckt = {}         # (x, y) -> [stadt-ids]
     stadt_info = []
+    auszug = prep(poly_lesen(args.auszug_poly)) if args.auszug_poly else None
+    if auszug is None:
+        log("   Hinweis: ohne --auszug-poly wird nicht geprüft, ob Kacheln über den Auszug hinausragen")
     for s in staedte:
         rid, ms = stadt_rel[s["id"]]
         aussen, innen = [], []
@@ -320,10 +345,14 @@ def main():
         mit_puffer = zu_wgs(stadt_utm.buffer(puffer, quad_segs=16))
         pp = prep(mit_puffer)
         w, su, o, n = mit_puffer.bounds
-        kacheln = []
+        kacheln, gekappt = [], 0
         for x in range(int(kx(w)), int(kx(o)) + 1):
             for y in range(int(ky(n)), int(ky(su)) + 1):
-                if pp.intersects(box(*kachel_rechteck(x, y))):
+                r = box(*kachel_rechteck(x, y))
+                if pp.intersects(r):
+                    if auszug is not None and not auszug.contains(r):
+                        gekappt += 1  # ragt über den Auszug hinaus (andere Bundesländer): Daten wären unvollständig
+                        continue
                     kacheln.append((x, y))
                     abgedeckt.setdefault((x, y), []).append(s["id"])
         bb = [min(kachel_rechteck(x, y)[0] for x, y in kacheln), min(kachel_rechteck(x, y)[1] for x, y in kacheln),
@@ -337,11 +366,15 @@ def main():
             "flaeche_kacheln_km2": round(sum(kachel_flaeche_km2(x, y) for x, y in kacheln), 1),
             "bbox": [round(v, 6) for v in bb],
             "anzahl_kacheln": len(kacheln),
+            "kacheln_ausserhalb_auszug": gekappt,
             "kacheln": bitmaske(kacheln),
             "grenze": mapping(stadt.simplify(0.0005, preserve_topology=True)),
         }
         if s.get("zusatz"):
             info["zusatz"] = s["zusatz"]
+        if gekappt:
+            info["hinweis"] = (f"Randgebiet an der Grenze des Niedersachsen-Auszugs abgeschnitten ({gekappt} Kacheln "
+                               "fehlen, dort lädt die App live)")
         stadt_info.append(info)
         log(f"   {s['name']}: Stadt {info['flaeche_stadt_km2']} km², mit Puffer {info['flaeche_mit_puffer_km2']} km², "
             f"{len(kacheln)} Kacheln ({info['flaeche_kacheln_km2']} km²)")
@@ -564,7 +597,7 @@ def main():
     manifest = {
         "format": FORMAT,
         "name": "Niedersachsen-Cache",
-        "beschreibung": "OpenStreetMap-Daten der Großstädte Niedersachsens (+ Wilhelmshaven) mit Randgebiet, "
+        "beschreibung": "OpenStreetMap-Daten der Großstädte Niedersachsens (+ Zusatz: Wilhelmshaven, Delmenhorst) mit Randgebiet, "
                         "vorgeschnitten in Kacheln im Format der Overpass-Antwort 'out geom'.",
         "datenstand": datenstand,
         "erstellt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -573,6 +606,9 @@ def main():
             "auszug": "Geofabrik niedersachsen-latest.osm.pbf",
             "url": args.quelle_url,
             "datenstand": datenstand,
+            "umriss": os.path.basename(args.auszug_poly) if args.auszug_poly else None,
+            "hinweis": "Der Geofabrik-Auszug Niedersachsen enthält auch das Land Bremen (wichtig für Delmenhorst). "
+                       "Kacheln, die über den Umriss des Auszugs hinausragen (andere Bundesländer), sind nicht abgedeckt.",
         }],
         "lizenz": {
             "daten": "ODbL 1.0",

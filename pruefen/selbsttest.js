@@ -28,6 +28,7 @@ server.listen(0, '127.0.0.1', async () => {
 
     const hannover = [9.732, 52.370, 9.745, 52.378];
     pruefe('Hannover-Mitte abgedeckt', await C.abgedeckt(hannover) === true);
+    pruefe('Delmenhorst abgedeckt', await C.abgedeckt([8.623, 53.046, 8.638, 53.055]) === true);
     pruefe('Bremen nicht abgedeckt', await C.abgedeckt([8.80, 53.07, 8.81, 53.08]) === false);
     pruefe('falsche bbox gibt false', await C.abgedeckt('Unsinn') === false);
 
