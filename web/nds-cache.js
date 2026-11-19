@@ -6,20 +6,24 @@
  *
  *   <script src="https://jade-hs-vibecoding-wpk.github.io/niedersachsen-cache/nds-cache.js"></script>
  *   <script>
- *     async function ladeOsm(abfrage) {
- *       const ausCache = await NdsCache.overpass(abfrage);   // null = nicht im Cache
- *       if (ausCache) return ausCache;
- *       return ladeLiveVonOverpass(abfrage);                 // wie bisher
- *     }
+ *     // Am einfachsten: statt fetch an Overpass. Was der Cache hat, kommt sofort, nur der Rest geht an Overpass.
+ *     const daten = await NdsCache.laden(abfrage);           // wirft einen Fehler, wenn Overpass nötig war und nicht antwortet
+ *
+ *     // Oder selbst entscheiden:
+ *     const ausCache = await NdsCache.overpass(abfrage);     // null = nicht (ganz) im Cache
+ *     const daten2 = ausCache || await ladeLiveVonOverpass(abfrage);
  *   </script>
  *
+ * NdsCache.laden('[out:json];…;out geom;', {signal})  -> Promise<Overpass-Antwort>  (Router: Cache, sonst Overpass)
+ * NdsCache.planen('[out:json];…')              -> Promise<{cache:[…], overpass:[…], gruende:[…]}>  (nur nachsehen)
+ * NdsCache.overpass('[out:json];…;out geom;')  -> Promise<Overpass-Antwort | null>  (nur Cache)
  * NdsCache.abgedeckt([west, süd, ost, nord])  -> Promise<true|false>
  * NdsCache.elemente([west, süd, ost, nord])   -> Promise<{elements:[…]} | null>  (Option {ohneRouten:true})
- * NdsCache.overpass('[out:json];…;out geom;')  -> Promise<Overpass-Antwort | null>
- * NdsCache.stand, NdsCache.quellenangabe, NdsCache.geladeneBytes
+ * NdsCache.stand, NdsCache.quellenangabe, NdsCache.geladeneBytes, NdsCache.letzterWeg
  *
- * Das Skript wirft nie Fehler nach außen. Bei jedem Problem (Gebiet nicht im Cache, Abfrage nicht unterstützt,
- * Netz weg) kommt null – dann lädt die App live. Den Grund zeigt NdsCache.letzterGrund.
+ * overpass(), elemente() und abgedeckt() werfen nie Fehler nach außen. Bei jedem Problem (Gebiet nicht im Cache,
+ * Abfrage nicht unterstützt, Netz weg) kommt null – dann lädt die App live. Den Grund zeigt NdsCache.letzterGrund.
+ * laden() verhält sich wie ein Aufruf an Overpass: Antwort oder Fehler.
  * Daten: © OpenStreetMap-Mitwirkende, ODbL. Bitte auf jeder Karte und in jedem Export nennen.
  */
 (function (global) {
@@ -34,7 +38,7 @@
   var hat = Object.prototype.hasOwnProperty;
 
   var NdsCache = {
-    version: '1.0.0',
+    version: '1.1.0',
     basis: basis,
     stand: null,                     // Datenstand (OSM-Zeitstempel), sobald das Manifest geladen ist
     quellenangabe: '© OpenStreetMap-Mitwirkende, ODbL',
@@ -43,8 +47,17 @@
     gleichzeitig: 6,                 // höchstens so viele Downloads gleichzeitig
     zeitlimit: 15000,                // ms je Datei
     maxKacheln: 400,                 // größere Gebiete (ca. 220 km²) -> null, dann lieber live
-    letzterGrund: '',                // warum zuletzt null kam
-    manifest: null
+    letzterGrund: '',                // warum zuletzt null kam (bzw. warum laden() Overpass gefragt hat)
+    manifest: null,
+    // nur für NdsCache.laden():
+    overpassServer: [                // werden der Reihe nach gefragt
+      'https://overpass-api.de/api/interpreter',
+      'https://overpass.private.coffee/api/interpreter',
+      'https://overpass.kumi.systems/api/interpreter'
+    ],
+    overpassZeitlimit: 90000,        // ms je Server (Overpass wartet oft 30–60 s in der Schlange)
+    overpassPause: 5000,             // ms Pause, bevor belegte Server ein zweites Mal gefragt werden
+    letzterWeg: ''                   // 'cache', 'gemischt' oder 'overpass'
   };
 
   function Fehler(grund) { this.grund = grund; }
@@ -405,6 +418,7 @@
       erwarte(';');
     }
     if (!einst.json) nein('Abfrage ohne [out:json]');
+    var kopf = q.slice(0, i);   // für NdsCache.laden: Teil-Abfragen bekommen denselben Kopf
 
     function filterTeil() {   // nach "[" – Merkmalsfilter
       leer();
@@ -447,6 +461,7 @@
     }
     function anweisung(inUnion) {
       leer();
+      var start = i;   // quelle = Originaltext der Anweisung, für NdsCache.laden
       if (q.charAt(i) === '(') {
         i++;
         var teile = [];
@@ -456,7 +471,7 @@
           if (i >= n) nein('Klammer nicht geschlossen');
           teile.push(anweisung(true));
         }
-        return { art: 'union', teile: teile };
+        return { art: 'union', teile: teile, quelle: q.slice(start, i) };
       }
       var w = wort();
       if (w === 'out') {
@@ -472,6 +487,7 @@
           else nein('out ' + (x || q.substr(i, 10)) + ' nicht unterstützt');
         }
         if (a.menge === 'tags' && a.geom) nein('out tags geom nicht unterstützt');
+        a.quelle = q.slice(start, i);
         return a;
       }
       if (!hat.call(TYPEN, w)) nein('Anweisung "' + (w || q.substr(i, 12)) + '" nicht unterstützt');
@@ -485,10 +501,12 @@
         else nein('Teil "' + q.substr(i, 12) + '" nicht unterstützt');
       }
       if (!st.gebiete.length) { if (einst.bbox) st.gebiete.push(einst.bbox); else nein('Abfrage ohne Gebiet'); }
+      st.quelle = q.slice(start, i);
       return st;
     }
     var liste = [];
     for (;;) { leer(); if (i >= n) break; liste.push(anweisung(false)); }
+    liste.kopf = kopf;
     return liste;
   }
 
@@ -605,6 +623,201 @@
         });
       });
     }).catch(merkeGrund);
+  };
+
+  // ------------------------------------------------------------ Router: aus dem Cache, was geht – den Rest von Overpass
+  // Eine Anweisung kann der Cache nur dann ganz beantworten, wenn einer ihrer Filter einen Cache-Schlüssel verlangt
+  // (jedes Objekt mit diesem Schlüssel ist drin) und keiner ein gestrichenes Merkmal (note, source …) prüft.
+  // way["bicycle_road"="yes"] geht deshalb live; way["highway"]["bicycle_road"="yes"] kommt aus dem Cache.
+  function schluesselGrund(st, m) {
+    var schl = m.schluessel || [], streich = null;
+    try { if (m.streichliste_regex) streich = new RegExp(m.streichliste_regex); } catch (e) { streich = null; }
+    for (var i = 0; i < st.filter.length; i++) {
+      if (streich && streich.test(st.filter[i].k)) return 'Merkmal "' + st.filter[i].k + '" ist im Cache gestrichen';
+    }
+    var positiv = st.filter.filter(function (f) { return f.art === 'hat' || f.art === 'gleich' || f.art === 'passt'; });
+    if (positiv.some(function (f) { return schl.indexOf(f.k) >= 0 || (f.art === 'gleich' && schl.indexOf(f.k + '=' + f.v) >= 0); })) return '';
+    if (!positiv.length) return 'Abfrage ohne Merkmal (der Cache hat nur Objekte mit bestimmten Schlüsseln)';
+    return 'Schlüssel ' + positiv.map(function (f) { return '"' + f.k + '"'; }).join(', ') + ' nicht im Cache';
+  }
+  // '' = der Cache kann diesen Teil ganz beantworten, sonst der Grund, warum nicht
+  function teilGrund(t, out, m) {
+    var abfr = t.art === 'union' ? abfragenSammeln(t.teile, []) : [t];
+    for (var i = 0; i < abfr.length; i++) {
+      var st = abfr[i], g = schluesselGrund(st, m);
+      if (g) return g;
+      if (out && st.typen.indexOf('way') >= 0 && !out.geom && (out.menge === 'body' || out.menge === 'skel')) {
+        return 'Wege ohne "out geom" (Knotenliste) hat der Cache nicht';
+      }
+      for (var j = 0; j < st.gebiete.length; j++) {
+        var k;
+        try { k = gebietKacheln(st.gebiete[j]); } catch (e) { return e instanceof Fehler ? e.grund : String(e); }
+        if (!k) return 'Gebiet nicht (ganz) im Cache';
+        if (k.length > NdsCache.maxKacheln) return 'Gebiet zu groß (' + k.length + ' Kacheln)';
+      }
+    }
+    return '';
+  }
+  // Plan: {teile:[{quelle, grund}], kopf, out} bei einer Anweisung (oder Klammer) mit einem out – dann Teil für Teil.
+  // Sonst {ganz:true, grund}: alles aus dem Cache oder alles live.
+  function planen(q, m) {
+    var liste;
+    try { liste = zerlegen(q); } catch (e) { return { ganz: true, grund: 'Abfrage für den Cache nicht lesbar: ' + (e instanceof Fehler ? e.grund : e) }; }
+    if (!liste.some(function (a) { return a.art === 'out'; })) return { ganz: true, grund: 'Abfrage ohne out' };
+    if (liste.length === 2 && liste[0].art !== 'out' && liste[1].art === 'out') {
+      var teile = liste[0].art === 'union' ? liste[0].teile : [liste[0]];
+      return {
+        kopf: liste.kopf, out: liste[1],
+        teile: teile.map(function (t) { return { quelle: t.quelle, grund: teilGrund(t, liste[1], m) }; })
+      };
+    }
+    var g = '';
+    liste.forEach(function (a) { if (!g && a.art !== 'out') g = teilGrund(a, null, m); });
+    return { ganz: true, grund: g };
+  }
+
+  function abbruchFehler() {
+    try { return new DOMException('Laden abgebrochen', 'AbortError'); } catch (e) { var f = new Error('Laden abgebrochen'); f.name = 'AbortError'; return f; }
+  }
+  function warten(ms, signal) {
+    return new Promise(function (ok, fehler) {
+      if (signal && signal.aborted) { fehler(abbruchFehler()); return; }
+      var uhr = setTimeout(ok, ms);
+      if (signal) signal.addEventListener('abort', function () { clearTimeout(uhr); fehler(abbruchFehler()); }, { once: true });
+    });
+  }
+  function serverFehler(url, text, belegt, endgueltig) {
+    var e = new Error(url.replace(/^https?:\/\//, '').replace(/\/.*$/, '') + ': ' + text);
+    e.belegt = !!belegt; e.endgueltig = !!endgueltig; e.nds = true;
+    return e;
+  }
+  function kurz(text) {   // Overpass-Fehlerseite (HTML) auf die eigentliche Meldung kürzen
+    var m = /<strong[^>]*>\s*Error\s*<\/strong>:?([\s\S]*?)<\/p>/i.exec(text || '');
+    var s = (m ? m[1] : text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    return s.length > 200 ? s.slice(0, 200) + ' …' : s;
+  }
+
+  var totBis = {};   // Server, der nicht erreichbar war -> erst nach 10 Minuten wieder fragen
+  function einServer(url, q, zeit, signal) {
+    var ctrl = new AbortController(), zeitUm = false;
+    var uhr = setTimeout(function () { zeitUm = true; ctrl.abort(); }, zeit);
+    function abbrechen() { ctrl.abort(); }
+    if (signal) signal.addEventListener('abort', abbrechen, { once: true });
+    function aufraeumen() { clearTimeout(uhr); if (signal) signal.removeEventListener('abort', abbrechen); }
+    return fetch(url, { method: 'POST', body: new URLSearchParams({ data: q }), signal: ctrl.signal }).then(function (r) {
+      return r.text().then(function (text) {
+        if (!r.ok) {
+          var belegt = r.status === 429 || r.status === 502 || r.status === 503 || r.status === 504;
+          throw serverFehler(url, 'HTTP ' + r.status + (kurz(text) ? ' – ' + kurz(text) : ''), belegt, r.status === 400);
+        }
+        var js;
+        try { js = JSON.parse(text); } catch (e) { throw serverFehler(url, 'Antwort ist kein JSON (fehlt [out:json]?)', false, true); }
+        if (js.remark && /error/i.test(js.remark)) throw serverFehler(url, js.remark, false, false);
+        return js;
+      });
+    }).then(function (js) { aufraeumen(); return js; }, function (e) {
+      aufraeumen();
+      if (signal && signal.aborted) throw abbruchFehler();
+      if (e && e.nds) throw e;
+      totBis[url] = Date.now() + 10 * 60 * 1000;
+      throw serverFehler(url, zeitUm ? 'keine Antwort nach ' + Math.round(zeit / 1000) + ' s' : 'nicht erreichbar', false, false);
+    });
+  }
+  // Server der Reihe nach fragen. Sind alle belegt (429/502/503/504), nach einer Pause die belegten noch einmal.
+  function overpassFragen(q, o) {
+    var alle = (o.server || NdsCache.overpassServer).slice(), jetzt = Date.now();
+    var reihe = alle.filter(function (s) { return !(totBis[s] > jetzt); });
+    if (!reihe.length) reihe = alle;
+    var zeit = o.zeitlimit || NdsCache.overpassZeitlimit, belegt = [], gruende = [], zweiteRunde = false;
+    function naechster(i) {
+      if (o.signal && o.signal.aborted) return Promise.reject(abbruchFehler());
+      if (i >= reihe.length) {
+        if (!zweiteRunde && belegt.length) {
+          zweiteRunde = true; reihe = belegt; belegt = [];
+          return warten(NdsCache.overpassPause, o.signal).then(function () { return naechster(0); });
+        }
+        var f = new Error('Overpass hat nicht geantwortet (' + (gruende.join('; ') || 'kein Server angegeben') + ')');
+        f.gruende = gruende;
+        return Promise.reject(f);
+      }
+      return einServer(reihe[i], q, zeit, o.signal).catch(function (e) {
+        if (e.name === 'AbortError' || e.endgueltig) throw e;
+        gruende.push(e.message);
+        if (e.belegt) belegt.push(reihe[i]);
+        if (global.console && console.info) console.info('NdsCache: ' + e.message);
+        return naechster(i + 1);
+      });
+    }
+    return naechster(0);
+  }
+
+  function fertig(js, weg, grund) {
+    js.nds_cache = weg !== 'overpass';
+    js.nds_weg = weg;
+    NdsCache.letzterWeg = weg;
+    if (grund) NdsCache.letzterGrund = grund;
+    if (global.console && console.info) console.info('NdsCache.laden: ' + ({ cache: 'alles aus dem Cache', gemischt: 'teils aus dem Cache, teils von Overpass', overpass: 'alles von Overpass' })[weg] + (grund && weg !== 'cache' ? ' (' + grund + ')' : ''));
+    return js;
+  }
+  function verbinden(kopf, teile, out) {
+    return kopf + '(' + teile.map(function (t) { return t.quelle; }).join('') + ');' + out.quelle;
+  }
+
+  // Wie ein Aufruf an Overpass – nur schneller: Was der Cache hat, kommt sofort, nur der Rest geht an Overpass
+  // (in EINER Abfrage, weil dort jede Abfrage 30–60 s in der Schlange wartet). Liefert eine Overpass-Antwort
+  // (mit nds_weg: 'cache' | 'gemischt' | 'overpass') oder wirft einen Fehler, wenn Overpass nötig war und nicht antwortet.
+  // optionen: {signal: AbortSignal, zeitlimit: ms je Overpass-Server, ohneCache: true = direkt zu Overpass, server: [...]}
+  NdsCache.laden = function (abfrage, optionen) {
+    var o = optionen || {}, q = String(abfrage || '');
+    if (/^data=/.test(q)) q = decodeURIComponent(q.slice(5).replace(/\+/g, ' '));
+    function live(text, grund) {
+      return overpassFragen(text, o).then(function (js) { return fertig(js, 'overpass', grund); });
+    }
+    if (o.signal && o.signal.aborted) return Promise.reject(abbruchFehler());
+    if (o.ohneCache) return live(q, 'ohne Cache verlangt');
+    if (typeof DecompressionStream === 'undefined') return live(q, 'Browser kann kein gzip (DecompressionStream fehlt)');
+    return manifestLaden().then(function (m) { return planen(q, m); }, function (e) { return { ganz: true, grund: e instanceof Fehler ? e.grund : 'Cache nicht erreichbar' }; })
+      .then(function (plan) {
+        if (o.signal && o.signal.aborted) throw abbruchFehler();
+        if (plan.ganz) {
+          if (plan.grund) return live(q, plan.grund);
+          return NdsCache.overpass(q).then(function (js) { return js ? fertig(js, 'cache') : live(q, NdsCache.letzterGrund); });
+        }
+        var ausCache = plan.teile.filter(function (t) { return !t.grund; });
+        var rest = plan.teile.filter(function (t) { return t.grund; });
+        var grund = rest.map(function (t) { return t.grund; }).filter(function (g, i, a) { return a.indexOf(g) === i; }).join('; ');
+        if (!ausCache.length) return live(q, grund);
+        return NdsCache.overpass(rest.length ? verbinden(plan.kopf, ausCache, plan.out) : q).then(function (cacheJs) {
+          if (o.signal && o.signal.aborted) throw abbruchFehler();
+          if (!cacheJs) return live(q, NdsCache.letzterGrund);
+          if (!rest.length) return fertig(cacheJs, 'cache');
+          return overpassFragen(verbinden(plan.kopf, rest, plan.out), o).then(function (js) {
+            var gesehen = {}, els = [];
+            (js.elements || []).concat(cacheJs.elements).forEach(function (el) {
+              var s = el.type.charAt(0) + el.id;
+              if (!gesehen[s]) { gesehen[s] = true; els.push(el); }
+            });
+            js.elements = sortieren(els);
+            return fertig(js, 'gemischt', grund);
+          });
+        });
+      });
+  };
+
+  // Nur nachsehen, ohne zu laden: welche Teile einer Abfrage kämen aus dem Cache, welche von Overpass – und warum?
+  // -> Promise<{cache: ['…'], overpass: ['…'], gruende: ['…']}>
+  NdsCache.planen = function (abfrage) {
+    var q = String(abfrage || '');
+    if (/^data=/.test(q)) q = decodeURIComponent(q.slice(5).replace(/\+/g, ' '));
+    return manifestLaden().then(function (m) { return planen(q, m); }, function (e) { return { ganz: true, grund: e instanceof Fehler ? e.grund : 'Cache nicht erreichbar' }; })
+      .then(function (p) {
+        if (p.ganz) return p.grund ? { cache: [], overpass: [q], gruende: [p.grund] } : { cache: [q], overpass: [], gruende: [] };
+        var r = { cache: [], overpass: [], gruende: [] };
+        p.teile.forEach(function (t) {
+          if (t.grund) { r.overpass.push(t.quelle); r.gruende.push(t.grund); } else r.cache.push(t.quelle);
+        });
+        return r;
+      });
   };
 
   NdsCache.bereit = function () {

@@ -5,7 +5,19 @@
 const fs = require('fs'), path = require('path'), http = require('http');
 const SITE = path.resolve(process.argv[2] || 'site');
 
+// Overpass-Attrappe für NdsCache.laden(): merkt sich die Abfragen und liefert einen Strommast
+const overpassAnfragen = [];
 const server = http.createServer((req, res) => {
+  if (req.method === 'POST' && req.url === '/overpass') {
+    let body = '';
+    req.on('data', c => { body += c; });
+    req.on('end', () => {
+      overpassAnfragen.push(new URLSearchParams(body).get('data'));
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(JSON.stringify({ version: 0.6, generator: 'Attrappe', osm3s: {}, elements: [{ type: 'node', id: 1, lat: 52.374, lon: 9.738, tags: { power: 'tower' } }] }));
+    });
+    return;
+  }
   fs.readFile(path.join(SITE, decodeURIComponent(req.url.split('?')[0])), (e, d) => {
     if (e) { res.writeHead(404); res.end(); return; }
     res.writeHead(200, { 'Access-Control-Allow-Origin': '*' }); res.end(d);
@@ -53,6 +65,21 @@ server.listen(0, '127.0.0.1', async () => {
     pruefe('außerhalb -> null', await C.overpass('[out:json];way["highway"](53.07,8.80,53.08,8.81);out geom;') === null);
     pruefe('ohne [out:json] -> null', await C.overpass('way["highway"](52.37,9.73,52.38,9.74);out geom;') === null);
     pruefe('Wege mit out body -> null', await C.overpass('[out:json];way["highway"](52.37,9.73,52.38,9.74);out;') === null);
+
+    // Router NdsCache.laden(): Overpass ist hier nur eine Attrappe (die Action fragt nie das echte Overpass)
+    C.overpassServer = [globalThis.NDS_CACHE_BASIS + 'overpass'];
+    const H = '52.370,9.732,52.378,9.745', K = '[out:json][timeout:60];';
+    const ganz = await C.laden(K + '(way["building"](' + H + ');node["amenity"](' + H + '););out geom;');
+    pruefe('laden: alles aus dem Cache', ganz.nds_weg === 'cache' && overpassAnfragen.length === 0, ganz.elements.length + ' Elemente');
+    const gemischt = await C.laden(K + '(way["building"](' + H + ');node["power"](' + H + '););out geom;');
+    pruefe('laden: gemischt, nur der power-Teil geht an Overpass', gemischt.nds_weg === 'gemischt' && overpassAnfragen.length === 1 &&
+      overpassAnfragen[0] === K + '(node["power"](' + H + '););out geom;', overpassAnfragen[0]);
+    pruefe('laden: Ergebnis enthält beides', gemischt.elements.some(e => e.id === 1) && gemischt.elements.filter(e => e.type === 'way').length > 100);
+    const aussen = '[out:json];way["highway"](53.07,8.80,53.08,8.81);out geom;';
+    const r3 = await C.laden(aussen);
+    pruefe('laden: außerhalb geht unverändert an Overpass', r3.nds_weg === 'overpass' && overpassAnfragen[1] === aussen);
+    const plan = await C.planen(K + '(way["highway"]["bicycle_road"="yes"](' + H + ');way["bicycle_road"="yes"](' + H + '););out geom;');
+    pruefe('planen: Schlüssel-Regel', plan.cache.length === 1 && plan.overpass.length === 1, JSON.stringify(plan.gruende));
     console.log('geladen: ' + Math.round(C.geladeneBytes / 1024) + ' KB');
   } catch (e) {
     console.error(e); fehler++;

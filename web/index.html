@@ -58,10 +58,13 @@
       <option value="laeden">Läden und Gastronomie (Punkte)</option>
       <option value="gruen">Grün- und Wasserflächen</option>
       <option value="bus">Buslinien (Relationen)</option>
+      <option value="gemischt">Gebäude + Strommasten (Strom ist nicht im Cache)</option>
     </select>
   </p>
   <textarea id="abfrage" spellcheck="false"></textarea>
-  <button class="haupt" id="los">Aus dem Cache laden</button>
+  <button class="haupt" id="los" title="NdsCache.overpass(abfrage): nur aus dem Cache, sonst null">Aus dem Cache laden</button>
+  <button id="router" title="NdsCache.laden(abfrage): aus dem Cache, was geht – den Rest von Overpass">Mit Router laden</button>
+  <button id="plan" title="NdsCache.planen(abfrage): nur nachsehen, nichts laden">Cache oder Overpass?</button>
   <button id="alles" title="NdsCache.elemente(bbox): alle Objekte im Gebiet">Alle Objekte im Gebiet</button>
   <div id="ergebnis" class="klein">Noch nichts geladen.</div>
 
@@ -72,12 +75,12 @@
   <h2>In deiner App benutzen</h2>
 <pre>&lt;script src="https://jade-hs-vibecoding-wpk.github.io/niedersachsen-cache/nds-cache.js"&gt;&lt;/script&gt;
 &lt;script&gt;
-  async function ladeOsm(abfrage) {
-    const daten = await NdsCache.overpass(abfrage);
-    if (daten) return daten;          // aus dem Cache
-    return ladeLive(abfrage);         // sonst wie bisher
-  }
+  // statt fetch an Overpass – eine Zeile:
+  const daten = await NdsCache.laden(abfrage);
+  // daten.nds_weg: 'cache', 'gemischt' oder 'overpass'
 &lt;/script&gt;</pre>
+  <p class="klein">Was der Cache hat, kommt sofort; nur der Rest geht in <em>einer</em> Abfrage an Overpass.
+     Wer selbst entscheiden will: <code>NdsCache.overpass(abfrage)</code> liefert nur aus dem Cache, sonst <code>null</code>.</p>
   <p class="klein">Anleitung, Grenzen und Lizenz: <a href="https://github.com/Jade-HS-Vibecoding-WPK/niedersachsen-cache#readme">README auf GitHub</a>.
      Daten: <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap-Mitwirkende, ODbL</a>.</p>
 </aside>
@@ -88,7 +91,8 @@
     strassen: '[out:json][timeout:60];\nway["highway"]({b});\nout geom;',
     laeden: '[out:json][timeout:60];\n(node["shop"]({b});node["amenity"~"^(restaurant|cafe|bar|pub|fast_food)$"]({b}););\nout;',
     gruen: '[out:json][timeout:60];\n(way["leisure"~"^(park|garden|playground)$"]({b});way["landuse"~"^(grass|forest|meadow|cemetery)$"]({b});way["natural"~"^(water|wood)$"]({b});relation["natural"="water"]({b}););\nout geom;',
-    bus: '[out:json][timeout:60];\nrelation["type"="route"]["route"="bus"]({b});\nout geom;'
+    bus: '[out:json][timeout:60];\nrelation["type"="route"]["route"="bus"]({b});\nout geom;',
+    gemischt: '[out:json][timeout:60];\n(way["building"]({b});node["power"]({b}););\nout geom;'
   };
   var $ = function (id) { return document.getElementById(id); };
   var karte = new maplibregl.Map({
@@ -155,12 +159,26 @@
     $('ergebnis').textContent = 'Lade …';
     versprechen.then(function (js) {
       var ms = Math.round(performance.now() - t0), kb = Math.round((NdsCache.geladeneBytes - b0) / 1024);
-      if (!js) { $('ergebnis').textContent = 'null – ' + NdsCache.letzterGrund + '. Eine App würde jetzt live bei Overpass laden.'; return; }
-      $('ergebnis').textContent = name + ': ' + zaehlen(js.elements) + ' in ' + ms + ' ms, ' + kb + ' KB übertragen' + (kb === 0 ? ' (schon im Speicher)' : '') + '.';
+      if (!js) { $('ergebnis').textContent = 'null – ' + NdsCache.letzterGrund + '. Eine App würde jetzt live bei Overpass laden – oder gleich „Mit Router laden“.'; return; }
+      var weg = { cache: 'alles aus dem Cache', gemischt: 'teils aus dem Cache, teils von Overpass', overpass: 'alles von Overpass' }[js.nds_weg];
+      $('ergebnis').textContent = name + ': ' + zaehlen(js.elements) + ' in ' + ms + ' ms, ' + kb + ' KB aus dem Cache übertragen' + (kb === 0 && js.nds_weg !== 'overpass' ? ' (schon im Speicher)' : '') + '.' +
+        (weg ? ' Weg: ' + weg + (js.nds_weg !== 'cache' ? ' – ' + NdsCache.letzterGrund : '') + '.' : '');
       zeichnen(js.elements);
+    }, function (e) {
+      $('ergebnis').textContent = name + ': Fehler nach ' + Math.round((performance.now() - t0) / 1000) + ' s – ' + e.message;
     });
   }
   $('los').onclick = function () { messen('NdsCache.overpass', NdsCache.overpass($('abfrage').value)); };
+  $('router').onclick = function () {
+    $('ergebnis').textContent = 'Lade … (wenn ein Teil zu Overpass muss, kann das 30–60 s dauern)';
+    messen('NdsCache.laden', NdsCache.laden($('abfrage').value));
+  };
+  $('plan').onclick = function () {
+    NdsCache.planen($('abfrage').value).then(function (p) {
+      $('ergebnis').textContent = (p.cache.length ? 'Aus dem Cache: ' + p.cache.join(' ') + ' ' : '') +
+        (p.overpass.length ? 'Von Overpass: ' + p.overpass.join(' ') + ' Grund: ' + p.gruende.join('; ') + '.' : 'Nichts muss zu Overpass.');
+    });
+  };
   $('alles').onclick = function () { messen('NdsCache.elemente', NdsCache.elemente(gebiet())); };
 
   // Übersicht und Abdeckung

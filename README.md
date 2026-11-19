@@ -46,38 +46,95 @@ Thüringen und Sachsen-Anhalt (dafür fehlen die Daten); Bremen ist dagegen dabe
 
 ## So benutzt du es
 
-Du brauchst nur **eine Zeile** in deiner `index.html` und tauschst deine Overpass-Abfrage gegen
-`NdsCache.overpass(abfrage) || live`:
+### Am einfachsten: `NdsCache.laden` statt Overpass
+
+Du brauchst **eine Zeile** in deiner `index.html` und tauschst deinen Aufruf an Overpass gegen `NdsCache.laden`:
 
 ```html
 <script src="https://jade-hs-vibecoding-wpk.github.io/niedersachsen-cache/nds-cache.js"></script>
 <script>
-  async function ladeOsm(abfrage) {                       // abfrage = dein bisheriger Overpass-Text
-    const ausCache = await NdsCache.overpass(abfrage);    // fertige Antwort, genau wie von Overpass
-    if (ausCache) return ausCache;                        // -> sofort da
-    return ladeLiveVonOverpass(abfrage);                  // null -> wie bisher live laden
-  }
+  // vorher:
+  //   const antwort = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: 'data=' + encodeURIComponent(abfrage) });
+  //   const daten = await antwort.json();
+  // jetzt:
+  const daten = await NdsCache.laden(abfrage);            // abfrage = dein bisheriger Overpass-Text
+
   // Quellenangabe auf die Karte schreiben (Pflicht, siehe unten):
   document.getElementById('quelle').textContent = NdsCache.quellenangabe;
 </script>
 ```
 
-- Klappt **per Doppelklick** auf deine `index.html` (file://) und auf **GitHub Pages**.
-- Die Antwort sieht aus wie die von Overpass (`{elements: [...]}`), dein bisheriger Code zum Umwandeln
-  in GeoJSON funktioniert also weiter. Einziger Unterschied: Wege haben kein Feld `nodes`, nur `geometry`.
+`NdsCache.laden` ist ein **Router**. Es zerlegt deine Abfrage in ihre Teile und
+
+1. beantwortet aus dem Cache, was dort **vollständig** liegt – sofort,
+2. schickt nur den Rest an Overpass, und zwar in **einer** Abfrage (dort wartet jede Abfrage 30–60 s, egal wie klein),
+3. mischt beides zu einer Antwort, die aussieht wie die von Overpass.
+
+Liegt dein Gebiet außerhalb, ist der Cache nicht erreichbar oder versteht er die Abfrage nicht, geht sie
+unverändert an Overpass. Die Overpass-Server werden der Reihe nach gefragt (`overpass-api.de`, dann zwei
+Ausweich-Server); sind alle belegt, nach 5 Sekunden noch einmal.
+
+- `daten.nds_weg` sagt, woher die Antwort kam: `'cache'`, `'gemischt'` oder `'overpass'`.
+  Warum ein Teil zu Overpass musste, steht in `NdsCache.letzterGrund`.
+- Antwortet Overpass nicht, **wirft** `laden` einen Fehler – wie `fetch` auch. Fang ihn mit `try … catch` ab.
+- Abbrechen: `NdsCache.laden(abfrage, { signal: controller.signal })`.
+  Am Cache vorbei direkt zu Overpass (z. B. für einen „Neu laden“-Knopf): `{ ohneCache: true }`.
+- **Nur nachsehen**, ohne etwas zu laden: `await NdsCache.planen(abfrage)` →
+  `{ cache: [...], overpass: [...], gruende: [...] }`. Oder auf der
+  [Testseite](https://jade-hs-vibecoding-wpk.github.io/niedersachsen-cache/) „Cache oder Overpass?“ drücken.
+
+**Wann kommt ein Teil aus dem Cache?** Wenn einer seiner Filter einen Schlüssel aus der Liste unter
+[„Was ist drin“](#was-ist-drin-was-nicht) verlangt – dann liegt jedes passende Objekt im Cache. Zum Beispiel:
+
+| Abfrage-Teil | kommt von | warum |
+|---|---|---|
+| `way["building"](…)` | Cache | `building` steht in der Liste |
+| `node["power"="tower"](…)` | Overpass | `power` steht nicht in der Liste |
+| `way["bicycle_road"="yes"](…)` | Overpass | `bicycle_road` steht nicht in der Liste … |
+| `way["highway"]["bicycle_road"="yes"](…)` | Cache | … mit `highway` davor schon (gleiches Ergebnis, Fahrradstraßen sind immer Straßen) |
+| `way["highway"]["note"](…)` | Overpass | `note` ist im Cache gestrichen |
+
+**Tipp:** Je mehr deiner Abfrage aus dem Cache kommt, desto schneller. Muss auch nur ein Teil zu Overpass,
+wartest du für diesen Teil wieder 30–60 s – die Teile aus dem Cache sind aber schon fertig.
+
+### Selbst entscheiden: `NdsCache.overpass`
+
+Willst du selbst bestimmen, was passiert, wenn der Cache nicht passt (z. B. eine eigene Ladeanzeige oder eigene
+Ausweich-Server), nimm `NdsCache.overpass`. Es fragt **nur** den Cache und gibt sonst `null` zurück:
+
+```js
+async function ladeOsm(abfrage) {                       // abfrage = dein bisheriger Overpass-Text
+  const ausCache = await NdsCache.overpass(abfrage);    // fertige Antwort, genau wie von Overpass
+  if (ausCache) return ausCache;                        // -> sofort da
+  return ladeLiveVonOverpass(abfrage);                  // null -> wie bisher live laden
+}
+```
+
 - **`null` heißt:** nicht im Cache (Gebiet außerhalb, Abfrage zu kompliziert, Netz weg) → live laden.
   Warum, steht in `NdsCache.letzterGrund`.
+- **Achtung:** `overpass` prüft die Schlüssel nicht. Fragst du nach etwas, das nicht in der Liste steht
+  (z. B. `power`), bekommst du eine unvollständige oder leere Antwort statt `null`. Mit `laden` passiert das nicht.
 
-Weitere Befehle:
+### Für beide gilt
+
+- Klappt **per Doppelklick** auf deine `index.html` (file://) und auf **GitHub Pages**.
+- Die Antwort sieht aus wie die von Overpass (`{elements: [...]}`), dein bisheriger Code zum Umwandeln
+  in GeoJSON funktioniert also weiter. Einziger Unterschied: Wege aus dem Cache haben kein Feld `nodes`, nur `geometry`.
+
+Alle Befehle:
 
 | Befehl | Ergebnis |
 |---|---|
-| `NdsCache.overpass(abfrage)` | Overpass-Antwort oder `null` |
+| `NdsCache.laden(abfrage, optionen)` | Overpass-Antwort (aus Cache, Overpass oder beidem) – oder ein Fehler, wenn Overpass nötig war und nicht antwortet. Optionen: `signal`, `ohneCache`, `zeitlimit` (ms je Server, Standard 90 000) |
+| `NdsCache.planen(abfrage)` | `{cache, overpass, gruende}` – welche Teile woher kämen, ohne zu laden |
+| `NdsCache.overpass(abfrage)` | Overpass-Antwort nur aus dem Cache oder `null` |
 | `NdsCache.elemente([west, süd, ost, nord])` | **alle** Objekte im Rechteck als `{elements: [...]}` oder `null`. Mit `{ohneRouten: true}` als zweitem Wert ohne Bus-/Bahn-/Radrouten (lädt viel weniger) |
 | `NdsCache.abgedeckt([west, süd, ost, nord])` | `true`, wenn das Rechteck ganz im Cache liegt |
 | `NdsCache.stand` | Datenstand, z. B. `2026-11-17T21:24:30Z` |
 | `NdsCache.quellenangabe` | `© OpenStreetMap-Mitwirkende, ODbL` |
-| `NdsCache.geladeneBytes` | bisher heruntergeladene Bytes (zum Messen) |
+| `NdsCache.geladeneBytes` | bisher aus dem Cache heruntergeladene Bytes (zum Messen) |
+| `NdsCache.letzterWeg` | woher die letzte Antwort von `laden` kam: `'cache'`, `'gemischt'` oder `'overpass'` |
+| `NdsCache.overpassServer` | Liste der Overpass-Server für `laden` (änderbar) |
 
 ### Welche Overpass-Abfragen versteht der Cache?
 
@@ -100,7 +157,7 @@ out geom;
 - Klammern `( … );` für mehrere Teile, mehrere `out` nacheinander
 - Ausgabe: `out;` `out body;` `out geom;` `out geom qt;` `out skel geom;` `out tags;` `out ids;`
 
-**Nicht** unterstützt (dann kommt `null` und deine App lädt live): `make`, `out count`, `out center`,
+**Nicht** unterstützt (dann kommt bei `overpass` `null`, und `laden` schickt die Abfrage unverändert an Overpass): `make`, `out count`, `out center`,
 `out geom(…)`, `out meta`, `>`/`<` (Rekursion), `area[…]`, `around`, benannte Mengen (`->.x`), `[out:xml]`,
 außerdem `out;` für Wege (dafür bräuchte man die Knoten-Nummern – nimm `out geom;`).
 
@@ -135,8 +192,8 @@ außer dieser **Streichliste**: fremdsprachige Namen `name:xx` (außer `name:de`
 - **Nur diese Städte** mit ihrem Rand. Alles andere (andere Orte, Bremen-Stadt, ganz Deutschland) lädt deine App live.
   Liegt dein Gebiet nur zum Teil im Cache, kommt `null` → live.
 - Was **nicht** in der Liste oben steht (z. B. `power`, `barrier`, `historic` ohne eins der Merkmale oben,
-  reine Adresspunkte), fehlt im Cache. Fragt deine App danach, findet sie im Cache nichts.
-  Im Zweifel: Ergebnis mit dem Live-Ergebnis vergleichen.
+  reine Adresspunkte), fehlt im Cache. `NdsCache.laden` holt solche Teile automatisch von Overpass;
+  `NdsCache.overpass` liefert dafür eine unvollständige oder leere Antwort.
 - **Datenstand** bis zu gut einer Woche alt. Wer gerade selbst in OpenStreetMap einträgt, sieht das erst nach dem
   nächsten Bau.
 - Teile von sehr großen Objekten, die **außerhalb Niedersachsens** liegen (z. B. eine ICE-Route bis München),
