@@ -1,6 +1,6 @@
 # Baut den Niedersachsen-Cache aus dem Geofabrik-Auszug und veröffentlicht ihn auf GitHub Pages.
 #
-# Ablauf: Auszug laden -> bauen -> Größe prüfen (Abbruch über 900 MB) -> Selbsttest -> Pages-Artefakt -> veröffentlichen
+# Ablauf: Auszug laden -> bauen -> Größe prüfen (Abbruch über 950 MB) -> Selbsttest -> Pages-Artefakt -> veröffentlichen
 #         -> STAND.md schreiben und committen (hält den Zeitplan am Leben: GitHub schaltet geplante Läufe
 #            in öffentlichen Repos nach 60 Tagen ohne Aktivität ab).
 # Die Daten selbst werden NICHT ins Git eingecheckt, sie liegen nur auf der Pages-Seite.
@@ -10,6 +10,11 @@ name: Cache bauen
 
 on:
   workflow_dispatch:
+    inputs:
+      probelauf:
+        description: "Probelauf: nur bauen und prüfen, NICHT veröffentlichen (Manifest kommt als Artefakt)"
+        type: boolean
+        default: false
   schedule:
     - cron: "17 2 * * 1"   # jeden Montag 02:17 UTC (nachts)
 
@@ -65,24 +70,37 @@ jobs:
           echo "Seitengröße: $((GROESSE / 1000000)) MB in $DATEIEN Dateien"
           du -sh site/daten/*
           echo "### Niedersachsen-Cache: $((GROESSE / 1000000)) MB, $DATEIEN Dateien" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$GROESSE" -gt 900000000 ]; then
-            echo "::error::Seite ist größer als 900 MB. Zuerst puffer_m in bauen/staedte.json verkleinern."
+          if [ "$GROESSE" -gt 950000000 ]; then
+            echo "::error::Seite ist größer als 950 MB (GitHub Pages erlaubt 1 GB). budget_mb in bauen/staedte.json verkleinern."
             exit 1
           fi
 
       - name: Selbsttest
         run: node pruefen/selbsttest.js site
 
+      - name: Probelauf – Manifest und Grenzen als Artefakt
+        if: ${{ inputs.probelauf }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: probelauf-manifest
+          path: |
+            site/daten/manifest.json
+            site/daten/grenzen.json
+
       - uses: actions/configure-pages@v5
+        if: ${{ !inputs.probelauf }}
 
       - uses: actions/upload-pages-artifact@v4
+        if: ${{ !inputs.probelauf }}
         with:
           path: site
 
       - id: deploy
+        if: ${{ !inputs.probelauf }}
         uses: actions/deploy-pages@v4
 
       - name: STAND.md schreiben und committen
+        if: ${{ !inputs.probelauf }}
         env:
           LAUF_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |

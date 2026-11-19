@@ -196,7 +196,15 @@ def flaeche_aus_wegen(aussen, innen):
     def ringe(linien):
         if not linien:
             return []
-        return list(polygonize(linemerge(linien)))
+        m = linemerge(linien)
+        teile = list(m.geoms) if hasattr(m, "geoms") else [m]
+        # Kleine Lücken in der Grenze (Fehler in OSM, z. B. Meppen: 2 m) schließen, wenn Anfang und Ende
+        # eines offenen Stücks höchstens ca. 100 m auseinander liegen
+        luecken = [LineString([l.coords[-1], l.coords[0]]) for l in teile
+                   if not l.is_closed and math.dist(l.coords[0], l.coords[-1]) < 0.0015]
+        if luecken:
+            m = linemerge(teile + luecken)
+        return list(polygonize(m))
 
     a = ringe(aussen)
     if not a:
@@ -247,6 +255,8 @@ def main():
     ap.add_argument("--staedte-datei", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "staedte.json"))
     ap.add_argument("--staedte", default="", help="nur diese Städte (ids, Komma-getrennt), z. B. für Tests")
     ap.add_argument("--puffer", type=float, default=None, help="Randgebiet in m (Standard: aus staedte.json)")
+    ap.add_argument("--budget-mb", type=float, default=None,
+                    help="höchstens so viele MB Daten (gepackt); Umland-Gemeinden darüber bleiben draußen (Standard: aus staedte.json)")
     ap.add_argument("--gross-schwelle", type=int, default=2,
                     help="Objekte, deren Umriss mehr als N x N z15-Kacheln überspannt, kommen in die Groß-Ebene")
     ap.add_argument("--auszug-poly", default="",
@@ -258,11 +268,21 @@ def main():
     t_start = time.time()
     konf = json.load(open(args.staedte_datei, encoding="utf-8"))
     puffer = args.puffer if args.puffer is not None else konf.get("puffer_m", 3000)
-    staedte = konf["staedte"]
+    budget_mb = args.budget_mb if args.budget_mb is not None else konf.get("budget_mb")
+    # Großstädte (immer drin), dann Umland-Gemeinden nach Entfernung von Oldenburg (drin, solange das Budget reicht)
+    staedte = [dict(s, gruppe="grossstadt", puffer_m=s.get("puffer_m", puffer)) for s in konf["staedte"]]
+    umland = konf.get("umland") or {}
+    staedte += [dict(s, gruppe="umland", puffer_m=s.get("puffer_m", umland.get("puffer_m", puffer)))
+                for s in umland.get("orte", [])]
     if args.staedte:
         wahl = set(args.staedte.split(","))
         staedte = [s for s in staedte if s["id"] in wahl]
+    if args.puffer is not None:
+        for s in staedte:
+            s["puffer_m"] = args.puffer
     ags_zu_stadt = {s["ags"]: s for s in staedte}
+    log(f"{sum(s['gruppe'] == 'grossstadt' for s in staedte)} Großstädte, {sum(s['gruppe'] == 'umland' for s in staedte)} "
+        f"Umland-Gemeinden, Budget {budget_mb} MB")
 
     rd = osmium.io.Reader(args.pbf, osmium.osm.NOTHING)
     kopf = rd.header()
@@ -293,9 +313,13 @@ def main():
                 rel_wege.add(ref)
             elif typ == "n":
                 rel_knoten.add(ref)
-    fehlend = [s["id"] for s in staedte if s["id"] not in stadt_rel]
+    fehlend = [s["id"] for s in staedte if s["id"] not in stadt_rel and s["gruppe"] == "grossstadt"]
     if fehlend:
         sys.exit("Stadtgrenze nicht gefunden (AGS prüfen): " + ", ".join(fehlend))
+    ohne_grenze = [s["name"] for s in staedte if s["id"] not in stadt_rel]
+    if ohne_grenze:   # Umland: nicht schlimm, die Gemeinde fehlt dann eben
+        log(f"   Hinweis: keine Grenze in OSM für {len(ohne_grenze)} Umland-Gemeinde(n), übersprungen: {', '.join(ohne_grenze)}")
+        staedte = [s for s in staedte if s["id"] in stadt_rel]
     log(f"   {len(rel)} Relationen mit passenden Schlüsseln, {len(rel_wege)} Mitglieds-Wege")
 
     # ---------------- 2. Wege: Stadtgrenzen + Mitglieds-Wege, die der Hauptdurchgang nicht sieht
@@ -328,6 +352,8 @@ def main():
         return shapely.transform(g, lambda c: numpy.column_stack(_wgs.transform(c[:, 0], c[:, 1])))
     abgedeckt = {}         # (x, y) -> [stadt-ids]
     stadt_info = []
+    stadt_kacheln = {}     # stadt-id -> [(x, y)]
+    grenzen = {}           # stadt-id -> GeoJSON der Grenze (eigene Datei, damit das Manifest klein bleibt)
     auszug = prep(poly_lesen(args.auszug_poly)) if args.auszug_poly else None
     if auszug is None:
         log("   Hinweis: ohne --auszug-poly wird nicht geprüft, ob Kacheln über den Auszug hinausragen")
@@ -340,9 +366,12 @@ def main():
                 (innen if rolle == "inner" else aussen).append(LineString(pts))
         stadt = flaeche_aus_wegen(aussen, innen)
         if stadt is None or stadt.is_empty:
+            if s["gruppe"] == "umland":
+                log(f"   Hinweis: Grenze von {s['name']} ließ sich nicht zusammensetzen (Relation {rid}), übersprungen")
+                continue
             sys.exit(f"Stadtgrenze von {s['name']} ließ sich nicht zusammensetzen (Relation {rid})")
         stadt_utm = zu_utm(stadt)
-        mit_puffer = zu_wgs(stadt_utm.buffer(puffer, quad_segs=16))
+        mit_puffer = zu_wgs(stadt_utm.buffer(s["puffer_m"], quad_segs=16))
         pp = prep(mit_puffer)
         w, su, o, n = mit_puffer.bounds
         kacheln, gekappt = [], 0
@@ -355,21 +384,27 @@ def main():
                         continue
                     kacheln.append((x, y))
                     abgedeckt.setdefault((x, y), []).append(s["id"])
+        if not kacheln:
+            log(f"   Hinweis: {s['name']} liegt ganz außerhalb des Auszugs, übersprungen")
+            continue
+        stadt_kacheln[s["id"]] = kacheln
         bb = [min(kachel_rechteck(x, y)[0] for x, y in kacheln), min(kachel_rechteck(x, y)[1] for x, y in kacheln),
               max(kachel_rechteck(x, y)[2] for x, y in kacheln), max(kachel_rechteck(x, y)[3] for x, y in kacheln)]
         info = {
-            "id": s["id"], "name": s["name"], "ags": s["ags"], "osm_relation": rid,
+            "id": s["id"], "name": s["name"], "ags": s["ags"], "osm_relation": rid, "gruppe": s["gruppe"],
             "einwohner_ca": s.get("einwohner_ca"),
             "flaeche_stadt_km2": round(stadt_utm.area / 1e6, 1),
-            "puffer_m": puffer,
+            "puffer_m": s["puffer_m"],
             "flaeche_mit_puffer_km2": round(zu_utm(mit_puffer).area / 1e6, 1),
             "flaeche_kacheln_km2": round(sum(kachel_flaeche_km2(x, y) for x, y in kacheln), 1),
             "bbox": [round(v, 6) for v in bb],
             "anzahl_kacheln": len(kacheln),
             "kacheln_ausserhalb_auszug": gekappt,
             "kacheln": bitmaske(kacheln),
-            "grenze": mapping(stadt.simplify(0.0005, preserve_topology=True)),
         }
+        grenzen[s["id"]] = mapping(stadt.simplify(0.0005, preserve_topology=True))
+        if s.get("km_von_oldenburg") is not None:
+            info["km_von_oldenburg"] = s["km_von_oldenburg"]
         if s.get("zusatz"):
             info["zusatz"] = s["zusatz"]
         if gekappt:
@@ -381,13 +416,19 @@ def main():
     for ref in grenz_wege - rel_wege:
         wege_knoten.pop(ref, None)
     eltern = {(x >> (Z - ZG), y >> (Z - ZG)) for x, y in abgedeckt}
-    # grobe Vorauswahl: Rahmen je Stadt (Grad)
-    rahmen = [tuple(i["bbox"]) for i in stadt_info]
+    log(f"   zusammen {len(abgedeckt)} Kacheln z15, {len(eltern)} Kacheln z12")
 
+    # grobe Vorauswahl über das z12-Raster (schnell, auch bei Hunderten Gemeinden):
+    # Liegt der Rahmen eines Objekts in keiner z12-Kachel über einer abgedeckten z15-Kachel, ist es nicht dabei.
     def im_rahmen(w, s, o, n):
-        for a in rahmen:
-            if o >= a[0] and w <= a[2] and n >= a[1] and s <= a[3]:
-                return True
+        x0, x1 = int(kx(w, ZG)), int(kx(o, ZG))
+        y0, y1 = int(ky(n, ZG)), int(ky(s, ZG))
+        if (x1 - x0 + 1) * (y1 - y0 + 1) > 64:
+            return any(x0 <= x <= x1 and y0 <= y <= y1 for x, y in eltern)
+        for x in range(x0, x1 + 1):
+            for y in range(y0, y1 + 1):
+                if (x, y) in eltern:
+                    return True
         return False
 
     # ---------------- Sammelstellen
@@ -566,11 +607,9 @@ def main():
     ziel = os.path.join(args.ausgabe, "daten")
     if os.path.isdir(ziel):
         shutil.rmtree(ziel)
-    groessen = Counter()
-    dateien = Counter()
-    max_datei = {}
+    datei_gr = {}          # (art, x, y) -> (Bytes gepackt, Bytes roh, Pfad)
 
-    def schreiben(pfad, nummern, art):
+    def schreiben(pfad, nummern, art, x, y):
         nummern = sorted(set(nummern), key=lambda i: sortier[i])
         roh = '{"elements":[\n' + ",\n".join(texte[i] for i in nummern) + "\n]"
         if art == "osm-routen":
@@ -582,22 +621,74 @@ def main():
         os.makedirs(os.path.dirname(pfad), exist_ok=True)
         with open(pfad, "wb") as f:
             f.write(gz)
-        groessen[art] += len(gz)
-        groessen[art + "_roh"] += len(roh)
-        dateien[art] += 1
-        if len(gz) > max_datei.get(art, (0, ""))[0]:
-            max_datei[art] = (len(gz), pfad)
+        datei_gr[(art, x, y)] = (len(gz), len(roh), pfad)
 
     for (x, y) in sorted(abgedeckt):
-        schreiben(os.path.join(ziel, "osm", str(Z), str(x), f"{y}.json.gz"), klein.get((x, y), []), "osm")
+        schreiben(os.path.join(ziel, "osm", str(Z), str(x), f"{y}.json.gz"), klein.get((x, y), []), "osm", x, y)
     for (x, y) in sorted(eltern):
-        schreiben(os.path.join(ziel, "osm-gross", str(ZG), str(x), f"{y}.json.gz"), gross.get((x, y), []), "osm-gross")
-        schreiben(os.path.join(ziel, "osm-routen", str(ZG), str(x), f"{y}.json.gz"), routen.get((x, y), []), "osm-routen")
+        schreiben(os.path.join(ziel, "osm-gross", str(ZG), str(x), f"{y}.json.gz"), gross.get((x, y), []), "osm-gross", x, y)
+        schreiben(os.path.join(ziel, "osm-routen", str(ZG), str(x), f"{y}.json.gz"), routen.get((x, y), []), "osm-routen", x, y)
+
+    # ---------------- Budget: Großstädte immer, dann Umland-Gemeinden der Reihe nach, solange es reicht
+    behalten, k15, k12, summe = [], set(), set(), 0
+    budget_info = None
+    for info in stadt_info:
+        neu15 = [k for k in stadt_kacheln[info["id"]] if k not in k15]
+        neu12 = {(x >> (Z - ZG), y >> (Z - ZG)) for x, y in neu15} - k12
+        plus = (sum(datei_gr[("osm",) + k][0] for k in neu15)
+                + sum(datei_gr[(a,) + e][0] for e in neu12 for a in ("osm-gross", "osm-routen")))
+        if budget_mb and info["gruppe"] == "umland" and summe + plus > budget_mb * 1e6:
+            draussen = [i["name"] for i in stadt_info[len(behalten):]]
+            budget_info = {"mb": budget_mb, "genutzt_mb": round(summe / 1e6, 1),
+                           "umland_aufgenommen": sum(i["gruppe"] == "umland" for i in behalten),
+                           "letzte_aufgenommen": behalten[-1]["name"],
+                           "radius_km": behalten[-1].get("km_von_oldenburg"),
+                           "erste_nicht_aufgenommen": f"{info['name']} (+{plus / 1e6:.1f} MB)",
+                           "nicht_aufgenommen": len(draussen)}
+            log(f"   Budget {budget_mb} MB erreicht bei {summe / 1e6:.1f} MB: {info['name']} (+{plus / 1e6:.1f} MB) "
+                f"und {len(draussen) - 1} weitere bleiben draußen")
+            break
+        summe += plus
+        k15.update(neu15)
+        k12 |= neu12
+        behalten.append(info)
+        info["mb"] = round(plus / 1e6, 2)
+    if budget_info is None:
+        budget_info = {"mb": budget_mb, "genutzt_mb": round(summe / 1e6, 1),
+                       "umland_aufgenommen": sum(i["gruppe"] == "umland" for i in behalten), "nicht_aufgenommen": 0,
+                       "hinweis": "Alle Gemeinden der Liste passen ins Budget."}
+    if len(behalten) < len(stadt_info):
+        for (art, x, y), (_, _, pfad) in list(datei_gr.items()):
+            if (x, y) not in (k15 if art == "osm" else k12):
+                os.remove(pfad)
+                del datei_gr[(art, x, y)]
+        for wurzel, ordner, namen in os.walk(ziel, topdown=False):
+            if not namen and not ordner:
+                os.rmdir(wurzel)
+        zaehler = Counter()   # neu zählen: nur, was in den verbliebenen Dateien steht
+        for i in set().union(*(klein.get(k, ()) for k in k15)):
+            zaehler[("knoten", "wege", "relationen")[sortier[i][0]]] += 1
+        for i in set().union(*(gross.get(e, ()) for e in k12)):
+            zaehler[("knoten", "wege", "relationen")[sortier[i][0]] + "_gross"] += 1
+        zaehler["routen"] = len(set().union(*(routen.get(e, ()) for e in k12)))
+    stadt_info = behalten
+    groessen, dateien, max_datei = Counter(), Counter(), {}
+    for (art, _, _), (gz, roh, pfad) in datei_gr.items():
+        groessen[art] += gz
+        groessen[art + "_roh"] += roh
+        dateien[art] += 1
+        if gz > max_datei.get(art, (0, ""))[0]:
+            max_datei[art] = (gz, pfad)
+    with open(os.path.join(ziel, "grenzen.json"), "w", encoding="utf-8") as f:
+        json.dump({"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"id": i["id"], "name": i["name"], "gruppe": i["gruppe"]}, "geometry": grenzen[i["id"]]}
+            for i in stadt_info]}, f, ensure_ascii=False, separators=(",", ":"))
 
     manifest = {
         "format": FORMAT,
         "name": "Niedersachsen-Cache",
-        "beschreibung": "OpenStreetMap-Daten der Großstädte Niedersachsens (+ Zusatz: Wilhelmshaven, Delmenhorst) mit Randgebiet, "
+        "beschreibung": "OpenStreetMap-Daten der Großstädte Niedersachsens (+ Zusatz: Wilhelmshaven, Delmenhorst) mit Randgebiet "
+                        "und der Gemeinden über 5000 Einwohner rund um Oldenburg (so viele, wie ins Budget passen), "
                         "vorgeschnitten in Kacheln im Format der Overpass-Antwort 'out geom'.",
         "datenstand": datenstand,
         "erstellt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -667,6 +758,13 @@ def main():
                               "dem Wert administrative). building:use ist zusätzlich drin, weil LOCUS danach fragt.",
         "streichliste": STREICHLISTE,
         "streichliste_regex": STREICH.pattern,
+        "budget": dict(budget_info, hinweis_regel=(
+            "Großstädte sind immer drin. Danach kommen die Umland-Gemeinden (über 5000 Einwohner) nach Entfernung "
+            "von Oldenburg dazu, bis die Daten-Dateien zusammen 'mb' Megabyte (gepackt) erreichen; staedte[].mb = "
+            "zusätzliche MB durch diese Gemeinde.")),
+        "grenzen": {"pfad": "grenzen.json",
+                    "hinweis": "Gemeindegrenzen (vereinfacht, ca. 50 m) als GeoJSON, nur zum Anzeigen. "
+                               "Abgedeckt ist die Grenze plus staedte[].puffer_m, auf Kacheln gerundet."},
         "staedte": stadt_info,
         "statistik": {
             "elemente": dict(zaehler),

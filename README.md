@@ -21,8 +21,10 @@ Deine App fragt zuerst hier. Liegt dort nichts, lädt sie wie bisher bei Overpas
 
 Die Großstädte Niedersachsens (über 100.000 Einwohner) mit ihren **Randgebieten**:
 Stadtgrenze plus etwa **3 km** rundherum. Dazu zwei **Zusatz-Städte**: Wilhelmshaven und Delmenhorst.
-Dörfer und das Land dazwischen sind nicht dabei. Der Rand endet an der Grenze zu Nordrhein-Westfalen, Hessen,
-Thüringen und Sachsen-Anhalt (dafür fehlen die Daten); Bremen ist dagegen dabei.
+Und rund um Oldenburg das **Umland**: alle Gemeinden über 5.000 Einwohner, so weit das Speicher-Budget reicht
+([siehe unten](#umland-oldenburg-gemeinden-über-5000-einwohner)).
+Der Rand endet an der Grenze zu Nordrhein-Westfalen, Hessen, Thüringen und Sachsen-Anhalt (dafür fehlen die Daten);
+Bremen ist dagegen dabei.
 
 | Stadt | Fläche der Stadt | mit 3-km-Rand | Hinweis |
 |---|---:|---:|---|
@@ -36,6 +38,24 @@ Thüringen und Sachsen-Anhalt (dafür fehlen die Daten); Bremen ist dagegen dabe
 | Hildesheim | 92 km² | 256 km² | **Grenzfall:** Hildesheim liegt knapp an der 100.000-Grenze (zuletzt knapp darunter) und ist trotzdem dabei. |
 | Wilhelmshaven | 107 km² | 271 km² | **Zusatz: Hochschulstandort** der Jade Hochschule (keine Großstadt). |
 | Delmenhorst | 62 km² | 206 km² | **Zusatz:** keine Großstadt (rund 80.000 Einwohner), aufgenommen wegen der Nähe zu Bremen und Oldenburg. Der Rand reicht bis nach Bremen hinein. |
+
+### Umland Oldenburg: Gemeinden über 5.000 Einwohner
+
+Rund um Oldenburg sind zusätzlich **alle Städte und Gemeinden mit mehr als 5.000 Einwohnern** drin – Städte wie
+Varel, Brake oder Cloppenburg und große Gemeinden wie Bad Zwischenahn, Rastede oder Ganderkesee, jeweils mit ihrer
+ganzen Gemeindefläche (also mit ihren Ortsteilen) plus etwa **1 km** Rand.
+
+- Aufgenommen wird **nach Entfernung von Oldenburg**, bis die Daten knapp unter dem 1-GB-Limit von GitHub Pages
+  liegen (Budget **880 MB**, gepackt). Das reicht zurzeit für **rund 135 Gemeinden bis etwa 90 km** um Oldenburg –
+  von Rastede und Bad Zwischenahn bis Emden, Cuxhaven, Verden und an den Rand von Osnabrück. Welche Gemeinden genau drin sind und wie weit das reicht, steht in
+  [`STAND.md`](STAND.md) und auf der [Testseite](https://jade-hs-vibecoding-wpk.github.io/niedersachsen-cache/)
+  (aufklappbare Liste „Umland Oldenburg“).
+- Kleinere Gemeinden unter 5.000 Einwohnern dazwischen fehlen. Dort lädt deine App live
+  (bzw. `NdsCache.laden` fragt für diesen Teil Overpass).
+- Wächst OpenStreetMap, fällt beim wöchentlichen Bau zuerst die entfernteste Gemeinde heraus – der Bau scheitert
+  nicht am Limit.
+- Einwohnerzahlen und Lage: Wikidata (meist Stand 31.12.2025), die Liste steht in
+  [`bauen/staedte.json`](bauen/staedte.json) unter `umland`.
 
 - **Datenstand:** steht auf der [Testseite](https://jade-hs-vibecoding-wpk.github.io/niedersachsen-cache/), in
   [`STAND.md`](STAND.md) und in [`daten/manifest.json`](https://jade-hs-vibecoding-wpk.github.io/niedersachsen-cache/daten/manifest.json).
@@ -189,8 +209,9 @@ außer dieser **Streichliste**: fremdsprachige Namen `name:xx` (außer `name:de`
 
 **Grenzen:**
 
-- **Nur diese Städte** mit ihrem Rand. Alles andere (andere Orte, Bremen-Stadt, ganz Deutschland) lädt deine App live.
-  Liegt dein Gebiet nur zum Teil im Cache, kommt `null` → live.
+- **Nur diese Städte und Gemeinden** mit ihrem Rand. Alles andere (andere Orte, Bremen-Stadt, ganz Deutschland)
+  lädt deine App live. Liegt dein Gebiet nur zum Teil im Cache, kommt bei `NdsCache.overpass` `null` → live;
+  `NdsCache.laden` schickt die Abfrage dann an Overpass.
 - Was **nicht** in der Liste oben steht (z. B. `power`, `barrier`, `historic` ohne eins der Merkmale oben,
   reine Adresspunkte), fehlt im Cache. `NdsCache.laden` holt solche Teile automatisch von Overpass;
   `NdsCache.overpass` liefert dafür eine unvollständige oder leere Antwort.
@@ -211,20 +232,24 @@ außer dieser **Streichliste**: fremdsprachige Namen `name:xx` (außer `name:de`
   (ein Weg gehört dazu, wenn er das Gebiet berührt).
 - Gebaut wird mit Python ([`bauen/bauen.py`](bauen/bauen.py), Bibliothek pyosmium) direkt aus dem
   Geofabrik-Auszug `niedersachsen-latest.osm.pbf` – **nicht** über Overpass. Das macht die GitHub Action
-  [`bauen.yml`](.github/workflows/bauen.yml) jeden Montag, prüft die Größe (Abbruch über 900 MB), testet die
-  Seite ([`pruefen/selbsttest.js`](pruefen/selbsttest.js)) und veröffentlicht sie. Die Daten selbst liegen
-  nicht im Git, nur auf der Pages-Seite.
+  [`bauen.yml`](.github/workflows/bauen.yml) jeden Montag, hält das Budget ein (`budget_mb`, siehe Umland),
+  prüft die Größe (Abbruch über 950 MB), testet die Seite ([`pruefen/selbsttest.js`](pruefen/selbsttest.js))
+  und veröffentlicht sie. Die Daten selbst liegen nicht im Git, nur auf der Pages-Seite.
+- Probelauf ohne Veröffentlichen: **Actions → Cache bauen → Run workflow → „Probelauf“ anhaken**. Dann kommen
+  `manifest.json` und `grenzen.json` als Artefakt zum Nachsehen, die Seite bleibt wie sie ist.
 
 ## Eine Stadt hinzufügen
 
-1. In [`bauen/staedte.json`](bauen/staedte.json) einen Eintrag ergänzen, z. B.
+1. In [`bauen/staedte.json`](bauen/staedte.json) unter `staedte` einen Eintrag ergänzen, z. B.
    `{"id": "delmenhorst", "name": "Delmenhorst", "ags": "03401000"}`.
    Der **AGS** (amtlicher Gemeindeschlüssel, 8 Ziffern) steht z. B. bei Wikipedia im Kasten rechts.
-   Optional `"zusatz": "…"` für einen Hinweis.
+   Optional `"zusatz": "…"` für einen Hinweis. Städte unter `staedte` sind **immer** drin; das Budget
+   verkleinert dann das Umland.
 2. Änderung auf `main` hochladen (Commit + Push oder direkt auf GitHub bearbeiten).
-3. Unter **Actions → Cache bauen → Run workflow** den Bau starten (dauert ca. 10 Minuten).
-4. Die Action bricht ab, wenn die Seite größer als 900 MB würde. Dann zuerst den Rand verkleinern
-   (`puffer_m` in `staedte.json`), nicht Merkmale weglassen.
+3. Unter **Actions → Cache bauen → Run workflow** den Bau starten (ca. 15–30 Minuten). Erst mit „Probelauf“
+   ausprobieren, wenn du unsicher bist.
+4. Die Action bricht ab, wenn die Seite trotz Budget größer als 950 MB würde (z. B. weil die Großstädte allein
+   schon zu groß sind). Dann `budget_mb` oder den Rand (`puffer_m`) verkleinern, nicht Merkmale weglassen.
 
 Selbst bauen auf dem eigenen Rechner (Python 3.12):
 

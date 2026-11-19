@@ -35,7 +35,25 @@ print()
 print("| Stadt | Fläche Stadt | mit 3-km-Rand | Kacheln |")
 print("|---|---:|---:|---:|")
 for s in m["staedte"]:
+    if s.get("gruppe") == "umland":
+        continue
     zusatz = " *(" + s["zusatz"].split(":")[0] + ")*" if s.get("zusatz") else ""
     print(f"| {s['name']}{zusatz} | {s['flaeche_stadt_km2']:.0f} km² | {s['flaeche_mit_puffer_km2']:.0f} km² | {s['anzahl_kacheln']} |")
 print()
+umland = [s for s in m["staedte"] if s.get("gruppe") == "umland"]
+if umland:
+    b = m.get("budget", {})
+    print(f"## Umland Oldenburg: {len(umland)} Gemeinden über 5.000 Einwohner")
+    print()
+    print(f"Nach Entfernung von Oldenburg aufgenommen, bis die Daten das Budget von {b.get('mb')} MB erreichen "
+          f"(genutzt: {b.get('genutzt_mb')} MB). Rand je Gemeinde ca. 1 km."
+          + (f" Als Erste nicht mehr drin: {b['erste_nicht_aufgenommen']}, dazu {b['nicht_aufgenommen'] - 1} weitere."
+             if b.get("erste_nicht_aufgenommen") else ""))
+    print()
+    print("| Gemeinde | km von Oldenburg | Einwohner | Fläche | zusätzliche MB |")
+    print("|---|---:|---:|---:|---:|")
+    for s in umland:
+        print(f"| {s['name']} | {s.get('km_von_oldenburg', 0):.0f} | {s.get('einwohner_ca') or 0:,} | "
+              f"{s['flaeche_stadt_km2']:.0f} km² | {s.get('mb', 0):.1f} |".replace(",", "."))
+    print()
 print("Daten: © OpenStreetMap-Mitwirkende, ODbL")

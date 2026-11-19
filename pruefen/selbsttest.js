@@ -43,6 +43,15 @@ server.listen(0, '127.0.0.1', async () => {
     pruefe('Delmenhorst abgedeckt', await C.abgedeckt([8.623, 53.046, 8.638, 53.055]) === true);
     pruefe('Bremen nicht abgedeckt', await C.abgedeckt([8.80, 53.07, 8.81, 53.08]) === false);
     pruefe('falsche bbox gibt false', await C.abgedeckt('Unsinn') === false);
+    const b = C.manifest.budget || {};
+    pruefe('Budget eingehalten', b.genutzt_mb > 0 && (!b.mb || b.genutzt_mb <= b.mb), JSON.stringify(b).slice(0, 300));
+    pruefe('Umland: Bad Zwischenahn abgedeckt', await C.abgedeckt([7.995, 53.180, 8.005, 53.186]) === true);
+    pruefe('Umland-Gemeinden im Manifest', C.manifest.staedte.filter(s => s.gruppe === 'umland').length >= 20,
+      C.manifest.staedte.filter(s => s.gruppe === 'umland').length + ' Gemeinden');
+    const grenzen = JSON.parse(fs.readFileSync(path.join(SITE, 'daten', 'grenzen.json'), 'utf8'));
+    pruefe('grenzen.json passt zum Manifest', grenzen.features.length === C.manifest.staedte.length);
+    pruefe('Manifest klein (ohne Grenzen)', fs.statSync(path.join(SITE, 'daten', 'manifest.json')).size < 400000,
+      Math.round(fs.statSync(path.join(SITE, 'daten', 'manifest.json')).size / 1024) + ' KB');
 
     const el = await C.elemente(hannover);
     pruefe('elemente(Hannover-Mitte)', el && el.elements.length > 500, el ? el.elements.length + ' Elemente' : C.letzterGrund);

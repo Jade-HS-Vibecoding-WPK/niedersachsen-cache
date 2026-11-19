@@ -31,6 +31,7 @@
   table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
   td, th { padding: 3px 4px; border-bottom: 1px solid var(--line); text-align: right; }
   td:first-child, th:first-child { text-align: left; }
+  summary { cursor: pointer; margin: 10px 0 4px; font-size: 13px; }
   #ergebnis { margin-top: 8px; padding: 8px; border-radius: 6px; background: var(--code); min-height: 2.5em; }
   a { color: var(--akzent); }
   @media (max-width: 760px) { body { flex-direction: column; } aside { width: 100%; height: 55vh; border-right: 0; border-bottom: 1px solid var(--line); } }
@@ -70,7 +71,12 @@
 
   <h2>Städte im Cache</h2>
   <table id="staedte"><thead><tr><th>Stadt</th><th>Stadt km²</th><th>mit Rand km²</th><th>Kacheln</th></tr></thead><tbody></tbody></table>
-  <p class="klein">Blau: abgedeckte Fläche (Stadtgrenze + ca. 3 km Rand, auf Kacheln von ca. 0,75 km gerundet).</p>
+  <details id="umland" hidden>
+    <summary></summary>
+    <table><thead><tr><th>Gemeinde</th><th>km von OL</th><th>Einwohner</th><th>MB</th></tr></thead><tbody></tbody></table>
+  </details>
+  <p class="klein">Blau: abgedeckte Fläche (Großstädte: Grenze + ca. 3 km Rand, Umland-Gemeinden: Grenze + ca. 1 km,
+     auf Kacheln von ca. 0,75 km gerundet). Eine Zeile anklicken zeigt die Stadt auf der Karte.</p>
 
   <h2>In deiner App benutzen</h2>
 <pre>&lt;script src="https://jade-hs-vibecoding-wpk.github.io/niedersachsen-cache/nds-cache.js"&gt;&lt;/script&gt;
@@ -186,33 +192,50 @@
     if (!ok) { $('stand').textContent = 'Cache nicht erreichbar: ' + NdsCache.letzterGrund; return; }
     var m = NdsCache.manifest;
     $('stand').textContent = 'Datenstand: ' + new Date(m.datenstand).toLocaleString('de-DE') + ' · gebaut ' + new Date(m.erstellt).toLocaleDateString('de-DE') + ' · wird jede Woche neu gebaut';
-    var tb = document.querySelector('#staedte tbody'), kacheln = [], grenzen = [];
-    m.staedte.forEach(function (s) {
+    var kacheln = [], gesehen = {}, umland = m.staedte.filter(function (s) { return s.gruppe === 'umland'; });
+    function zeile(tb, s, werte) {
       var tr = document.createElement('tr');
-      [s.name + (s.zusatz ? ' *' : ''), s.flaeche_stadt_km2, s.flaeche_mit_puffer_km2, s.anzahl_kacheln].forEach(function (w, i) {
-        var td = document.createElement('td'); td.textContent = typeof w === 'number' ? w.toLocaleString('de-DE') : w;
+      werte.forEach(function (w, i) {
+        var td = document.createElement('td'); td.textContent = typeof w === 'number' ? w.toLocaleString('de-DE') : (w == null ? '' : w);
         if (i === 0 && s.zusatz) td.title = s.zusatz;
         tr.appendChild(td);
       });
       tr.style.cursor = 'pointer';
       tr.onclick = function () { karte.fitBounds([[s.bbox[0], s.bbox[1]], [s.bbox[2], s.bbox[3]]], { padding: 20 }); };
       tb.appendChild(tr);
+    }
+    m.staedte.forEach(function (s) {
+      if (s.gruppe === 'umland') zeile(document.querySelector('#umland tbody'), s, [s.name, s.km_von_oldenburg, s.einwohner_ca, s.mb]);
+      else zeile(document.querySelector('#staedte tbody'), s, [s.name + (s.zusatz ? ' *' : ''), s.flaeche_stadt_km2, s.flaeche_mit_puffer_km2, s.anzahl_kacheln]);
       var k = s.kacheln, bin = atob(k.bits), n = Math.pow(2, 15);
       for (var i = 0; i < k.breite * k.hoehe; i++) {
         if (!(bin.charCodeAt(i >> 3) & (1 << (i & 7)))) continue;
         var x = k.x0 + i % k.breite, y = k.y0 + Math.floor(i / k.breite);
+        if (gesehen[x + '/' + y]) continue;   // Nachbar-Gemeinden teilen sich Kacheln
+        gesehen[x + '/' + y] = true;
         var w = x / n * 360 - 180, o = (x + 1) / n * 360 - 180;
         var no = 180 / Math.PI * Math.atan(Math.sinh(Math.PI - 2 * Math.PI * y / n)), su = 180 / Math.PI * Math.atan(Math.sinh(Math.PI - 2 * Math.PI * (y + 1) / n));
         kacheln.push({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[w, su], [o, su], [o, no], [w, no], [w, su]]] } });
       }
-      grenzen.push({ type: 'Feature', properties: { name: s.name }, geometry: s.grenze });
     });
+    if (umland.length) {
+      var b = m.budget || {};
+      $('umland').hidden = false;
+      $('umland').querySelector('summary').textContent = 'Umland Oldenburg: ' + umland.length + ' Gemeinden über 5.000 Einwohner' +
+        (b.radius_km ? ' bis ' + Math.round(b.radius_km) + ' km' : '') + (b.genutzt_mb ? ' (Daten zusammen ' + Math.round(b.genutzt_mb) + ' MB)' : '');
+    }
+    // Grenzen: eigene Datei (ältere Manifeste hatten sie noch in staedte[].grenze)
+    var grenzenLaden = m.grenzen ? fetch(NdsCache.basis + 'daten/' + m.grenzen.pfad).then(function (r) { return r.json(); }).catch(function () { return null; })
+      : Promise.resolve({ type: 'FeatureCollection', features: m.staedte.filter(function (s) { return s.grenze; }).map(function (s) { return { type: 'Feature', properties: { name: s.name }, geometry: s.grenze }; }) });
     kartenBereit.then(function () {
       karte.addSource('abdeckung', { type: 'geojson', data: { type: 'FeatureCollection', features: kacheln } });
       var darunter = karte.getLayer('erg-fl') ? 'erg-fl' : undefined;   // Ergebnisse bleiben oben
       karte.addLayer({ id: 'abdeckung', type: 'fill', source: 'abdeckung', paint: { 'fill-color': '#2f6fb0', 'fill-opacity': 0.08, 'fill-antialias': false } }, darunter);
-      karte.addSource('grenzen', { type: 'geojson', data: { type: 'FeatureCollection', features: grenzen } });
-      karte.addLayer({ id: 'grenzen', type: 'line', source: 'grenzen', paint: { 'line-color': '#2f6fb0', 'line-width': 1.5, 'line-dasharray': [3, 2] } }, darunter);
+      return grenzenLaden.then(function (gj) {
+        if (!gj) return;
+        karte.addSource('grenzen', { type: 'geojson', data: gj });
+        karte.addLayer({ id: 'grenzen', type: 'line', source: 'grenzen', paint: { 'line-color': '#2f6fb0', 'line-width': 1.2, 'line-dasharray': [3, 2] } }, karte.getLayer('erg-fl') ? 'erg-fl' : undefined);
+      });
     });
   });
 </script>
